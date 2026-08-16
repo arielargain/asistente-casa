@@ -3,6 +3,8 @@
 # Reemplaza desde la linea "i2c:" hasta el final del archivo.
 # NO toques nada de lo que esta arriba de i2c: ahi viven la clave de cifrado,
 # la contrasenia de OTA y el wifi.
+#
+# v2: se enciende la bocina de la placa y la pantalla.
 # ---------------------------------------------------------------------------
 
 i2c:
@@ -12,16 +14,31 @@ i2c:
     scan: true
     frequency: 400kHz
 
+# El expansor de I/O. La pantalla se comio casi todos los pines del micro, asi
+# que el reset del tactil, el reset del panel, la luz de la pantalla y el
+# amplificador del parlante cuelgan todos de este chip.
+ch422g:
+  - id: expansor
+    i2c_id: bus_a
+    address: 0x24
+
+# --------------------------------------------------------------- audio
+
 audio_adc:
   - platform: es7210
     id: mic_adc
     i2c_id: bus_a
     address: 0x40
     bits_per_sample: 16bit
-    # Antes estaba en 24dB. Con la tele prendida eso hacia que el ambiente
-    # entrara tan fuerte como la voz de Ariel. Menos ganancia = el microfono
-    # privilegia lo cercano.
     mic_gain: 18dB
+    sample_rate: 16000
+
+audio_dac:
+  - platform: es8311
+    id: dac_parlante
+    i2c_id: bus_a
+    address: 0x18
+    bits_per_sample: 16bit
     sample_rate: 16000
 
 i2s_audio:
@@ -38,20 +55,107 @@ microphone:
     adc_type: external
     pdm: false
     # channel: right es obligatorio en esta placa. Con left se graba un canal
-    # mudo: no detecta la palabra y el boton manual tampoco transcribe nada.
+    # mudo: no detecta la palabra y el boton tampoco transcribe nada.
     channel: right
     use_apll: true
     bits_per_sample: 16bit
     sample_rate: 16000
 
+speaker:
+  - platform: i2s_audio
+    id: parlante
+    i2s_audio_id: i2s_bus
+    dac_type: external
+    i2s_dout_pin: GPIO15
+    audio_dac: dac_parlante
+    sample_rate: 16000
+    bits_per_sample: 16bit
+    channel: mono
+
+# El pitido que pediste, ahora que hay bocina propia.
+rtttl:
+  id: tono
+  speaker: parlante
+
+# --------------------------------------------------------------- pantalla
+
+display:
+  - platform: rpi_dpi_rgb
+    id: pantalla
+    update_interval: 1s
+    auto_clear_enabled: false
+    color_order: RGB
+    pclk_frequency: 16MHZ
+    dimensions:
+      width: 800
+      height: 480
+    de_pin:
+      number: 5
+    hsync_pin:
+      number: 46
+      ignore_strapping_warning: true
+    vsync_pin:
+      number: 3
+      ignore_strapping_warning: true
+    pclk_pin: 7
+    reset_pin:
+      ch422g: expansor
+      number: 3
+    enable_pin:
+      ch422g: expansor
+      number: 2
+    hsync_back_porch: 16
+    hsync_front_porch: 16
+    hsync_pulse_width: 8
+    vsync_back_porch: 16
+    vsync_front_porch: 16
+    vsync_pulse_width: 8
+    data_pins:
+      red: [1, 2, 42, 41, 40]
+      blue: [14, 38, 18, 17, 10]
+      green: [39, 0, 45, 48, 47, 21]
+    lambda: |-
+      it.fill(Color(12, 14, 20));
+      it.printf(400, 190, id(letra_grande), Color(235, 238, 245),
+                TextAlign::CENTER, "%s", id(mensaje).c_str());
+      it.printf(400, 300, id(letra_chica), Color(120, 130, 150),
+                TextAlign::CENTER, "%s", id(detalle).c_str());
+
+touchscreen:
+  - platform: gt911
+    id: tactil
+    i2c_id: bus_a
+    display: pantalla
+    interrupt_pin: GPIO4
+    reset_pin:
+      ch422g: expansor
+      number: 1
+      mode:
+        output: true
+    on_touch:
+      - if:
+          condition:
+            lambda: 'return !id(va).is_running();'
+          then:
+            - lambda: 'id(seguidas) = 0;'
+            - voice_assistant.start:
+
+font:
+  - file: "gfonts://Roboto"
+    id: letra_grande
+    size: 64
+  - file: "gfonts://Roboto"
+    id: letra_chica
+    size: 28
+
+# --------------------------------------------------------------- estado
+
 globals:
-  # Hubo voz de verdad en el turno anterior.
   - id: hubo_voz
     type: bool
     restore_value: no
     initial_value: 'false'
-  # Cuantas veces seguidas reabrio el microfono solo. Es el freno de mano
-  # del bucle: sin esto, con la tele prendida no para nunca.
+  # Freno de mano del bucle: cuantas veces seguidas reabrio el microfono solo.
   - id: seguidas
     type: int
     restore_value: no
@@ -61,13 +165,31 @@ globals:
     type: bool
     restore_value: yes
     initial_value: 'false'
+  - id: mensaje
+    type: std::string
+    restore_value: no
+    initial_value: '"Okay Nabu"'
+  - id: detalle
+    type: std::string
+    restore_value: no
+    initial_value: '"decime eso para hablarme"'
+
+script:
+  - id: mostrar
+    parameters:
+      arriba: string
+      abajo: string
+    then:
+      - lambda: |-
+          id(mensaje) = arriba;
+          id(detalle) = abajo;
+      - component.update: pantalla
 
 micro_wake_word:
   id: mww
   microphone:
     microphone: mic
     channels: 0
-    # Antes 2. Multiplicaba una ganancia que ya venia alta.
     gain_factor: 1
   models:
     - model: okay_nabu
@@ -77,10 +199,22 @@ micro_wake_word:
         wake_word: !lambda return wake_word;
 
 switch:
-  # Este es el interruptor que aparece en Home Assistant.
+  # El amplificador del parlante se enciende por el expansor, no por un pin del
+  # micro. ALWAYS_ON lo levanta solo en cada arranque; sin esto la placa
+  # "habla" pero no sale sonido. internal: no aparece en Home Assistant.
+  - platform: gpio
+    id: amplificador
+    internal: true
+    restore_mode: ALWAYS_ON
+    pin:
+      ch422g: expansor
+      number: 4
+      mode:
+        output: true
+
   # Apagado: funciona por palabra de activacion, como una bocina comun.
-  # Prendido: despues de responder reabre el microfono para que Ariel
-  # conteste sin repetir "okay nabu".
+  # Prendido: despues de responder reabre el microfono para contestar sin
+  # repetir "okay nabu". Con tope de dos veces seguidas.
   - platform: template
     name: "Conversacion continua"
     id: sw_conversar
@@ -98,53 +232,46 @@ switch:
 voice_assistant:
   id: va
   microphone: mic
+  # Ahora la respuesta sale por la bocina de la placa. Se termina el rodeo por
+  # el parlante del dormitorio, que era la mitad del problema de realimentacion.
+  speaker: parlante
   noise_suppression_level: 2
-  # Antes 15dBFS. Bajarlo evita que amplifique el ruido de fondo hasta que
-  # parezca voz.
   auto_gain: 9dBFS
   volume_multiplier: 1.0
 
   on_client_connected:
     - micro_wake_word.start:
+    - script.execute:
+        id: mostrar
+        arriba: "Okay Nabu"
+        abajo: "decime eso para hablarme"
   on_client_disconnected:
     - micro_wake_word.stop:
 
   on_listening:
-    - homeassistant.action:
-        action: tts.speak
-        data:
-          entity_id: tts.piper
-          media_player_entity_id: media_player.dormitorio
-          # Corto a proposito: si se activa de mas, que moleste poco.
-          message: "Si"
-          cache: "true"
+    - rtttl.play: "beep:d=32,o=6,b=200:c"
+    - script.execute:
+        id: mostrar
+        arriba: "Te escucho"
+        abajo: "hablame"
 
   on_stt_end:
     - lambda: 'id(hubo_voz) = true;'
+    - script.execute:
+        id: mostrar
+        arriba: "Pensando"
+        abajo: "dame un segundo"
 
   on_error:
     - lambda: |-
         id(hubo_voz) = false;
         id(seguidas) = 0;
-
-  on_tts_end:
-    # Mientras suena la respuesta el microfono tiene que estar cerrado: sale
-    # por el parlante del dormitorio y si no, se escucha a si misma y arranca
-    # de nuevo. Ese era el bucle.
-    - micro_wake_word.stop:
-    - homeassistant.action:
-        action: media_player.play_media
-        data:
-          entity_id: media_player.dormitorio
-          media_content_type: music
-        data_template:
-          media_content_id: "{{ url }}"
-        variables:
-          url: !lambda 'return x;'
+    - script.execute:
+        id: mostrar
+        arriba: "No te entendi"
+        abajo: "probá de nuevo"
 
   on_end:
-    # Se le da tiempo al parlante a terminar antes de volver a escuchar.
-    - delay: 7s
     - if:
         condition:
           lambda: 'return id(conversar) && id(hubo_voz) && id(seguidas) < 2;'
@@ -152,11 +279,19 @@ voice_assistant:
           - lambda: |-
               id(hubo_voz) = false;
               id(seguidas) += 1;
+          - script.execute:
+              id: mostrar
+              arriba: "Segui"
+              abajo: "te sigo escuchando"
           - voice_assistant.start:
         else:
           - lambda: |-
               id(hubo_voz) = false;
               id(seguidas) = 0;
+          - script.execute:
+              id: mostrar
+              arriba: "Okay Nabu"
+              abajo: "decime eso para hablarme"
           - micro_wake_word.start:
 
 button:
