@@ -260,16 +260,16 @@ voice_assistant:
         id: mostrar
         arriba: "Te escucho"
         abajo: "hablame"
-    # Pitido de "empece a escuchar". Sin palabras, como pidio Ariel.
-    # Se usa el identificador de media source y no la URL: la URL lleva una
-    # firma que vence en un dia. announce despierta el parlante si dormia.
+    # Palabra en vez de pitido: el pitido no se escuchaba nunca. El parlante
+    # del dormitorio NO soporta announce (lo confirma supported_features), y
+    # un clip corto se pierde mientras el Google levanta el stream.
     - homeassistant.action:
-        action: media_player.play_media
+        action: tts.speak
         data:
-          entity_id: media_player.dormitorio
-          media_content_id: "media-source://media_source/local/./bip-inicio.wav"
-          media_content_type: music
-          announce: "true"
+          entity_id: tts.piper
+          media_player_entity_id: media_player.dormitorio
+          message: "Si"
+          cache: "true"
 
   on_stt_end:
     - lambda: 'id(hubo_voz) = true;'
@@ -277,15 +277,13 @@ voice_assistant:
         id: mostrar
         arriba: "Pensando"
         abajo: "dame un segundo"
-    # Pitido de "deje de escuchar, ya estoy pensando". Mas grave que el otro
-    # a proposito, para distinguirlos sin mirar.
     - homeassistant.action:
-        action: media_player.play_media
+        action: tts.speak
         data:
-          entity_id: media_player.dormitorio
-          media_content_id: "media-source://media_source/local/./bip-fin.wav"
-          media_content_type: music
-          announce: "true"
+          entity_id: tts.piper
+          media_player_entity_id: media_player.dormitorio
+          message: "Dale"
+          cache: "true"
 
   on_error:
     - lambda: |-
