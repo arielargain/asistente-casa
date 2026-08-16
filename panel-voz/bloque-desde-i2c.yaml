@@ -4,7 +4,8 @@
 # NO toques nada de lo que esta arriba de i2c: ahi viven la clave de cifrado,
 # la contrasenia de OTA y el wifi.
 #
-# v4: la bocina de la placa, otra vez, pero soltandole el bus al microfono.
+# v5: el asistente vuelve a hablar por el parlante del dormitorio, y se deja
+# UNA prueba en vivo para saber si el expansor CH422G realmente escribe.
 #
 # EL PROBLEMA QUE SE INTENTA RESOLVER:
 # El microfono (ES7210) y el parlante (ES8311) comparten el mismo bus I2S.
@@ -43,14 +44,6 @@ audio_adc:
     mic_gain: 18dB
     sample_rate: 16000
 
-audio_dac:
-  - platform: es8311
-    id: dac_parlante
-    i2c_id: bus_a
-    address: 0x18
-    bits_per_sample: 16bit
-    sample_rate: 16000
-
 i2s_audio:
   - id: i2s_bus
     i2s_lrclk_pin: GPIO16
@@ -71,29 +64,22 @@ microphone:
     bits_per_sample: 16bit
     sample_rate: 16000
 
-speaker:
-  - platform: i2s_audio
-    id: parlante
-    i2s_audio_id: i2s_bus
-    dac_type: external
-    i2s_dout_pin: GPIO15
-    audio_dac: dac_parlante
-    sample_rate: 16000
-    bits_per_sample: 16bit
-    channel: mono
-
 # --------------------------------------------------------------- pantalla
 
 switch:
-  # El amplificador del parlante cuelga del expansor, no de un pin del micro.
-  # Sin esto la placa reproduce pero no sale sonido.
+  # PRUEBA EN VIVO. Aparece en Home Assistant como "Luz de pantalla".
+  # Si al tocarlo la pantalla se ilumina o se apaga, el expansor escribe bien
+  # y el problema es la secuencia de arranque del panel. Si no pasa nada, las
+  # escrituras al expansor no llegan y hay que atacar eso.
+  # Por eso se le saco enable_pin al display: un solo duenio para EXIO2.
   - platform: gpio
-    id: amplificador
-    internal: true
+    name: "Luz de pantalla"
+    id: luz_pantalla
+    icon: mdi:television
     restore_mode: ALWAYS_ON
     pin:
       ch422g: expansor
-      number: 4
+      number: 2
       mode:
         output: true
 
@@ -136,9 +122,8 @@ display:
     reset_pin:
       ch422g: expansor
       number: 3
-    enable_pin:
-      ch422g: expansor
-      number: 2
+      mode:
+        output: true
     hsync_back_porch: 16
     hsync_front_porch: 16
     hsync_pulse_width: 8
@@ -236,8 +221,6 @@ micro_wake_word:
 voice_assistant:
   id: va
   microphone: mic
-  # La respuesta sale por la bocina de la placa.
-  speaker: parlante
   noise_suppression_level: 2
   auto_gain: 9dBFS
   volume_multiplier: 1.0
@@ -273,13 +256,23 @@ voice_assistant:
         arriba: "No te entendi"
         abajo: "proba de nuevo"
 
-  on_tts_start:
-    # ESTA ES LA LINEA CLAVE. El microfono tiene que soltar el bus I2S antes
-    # de que la bocina lo pida, o el driver de salida no arranca nunca.
+  on_tts_end:
+    # El microfono queda cerrado mientras suena la respuesta: sale por el
+    # parlante del dormitorio y si no, se escucha a si misma y arranca de nuevo.
     - micro_wake_word.stop:
+    - homeassistant.action:
+        action: media_player.play_media
+        data:
+          entity_id: media_player.dormitorio
+          media_content_type: music
+        data_template:
+          media_content_id: "{{ url }}"
+        variables:
+          url: !lambda 'return x;'
 
   on_end:
-    - delay: 1s
+    # Se le da tiempo al parlante a terminar antes de volver a escuchar.
+    - delay: 7s
     - if:
         condition:
           lambda: 'return id(conversar) && id(hubo_voz) && id(seguidas) < 2;'
