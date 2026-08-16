@@ -21,7 +21,19 @@ from hogar import Hogar
 
 log = logging.getLogger("vigilante")
 
-SIN_RESPUESTA = ("unavailable", "unknown")
+# Solo esto significa "no responde". 'unknown' NO entra: para los botones, las
+# escenas, los emisores de infrarrojo y los motores de voz es su estado normal
+# de reposo, y tratarlo como caida llenaba el panel de falsos positivos.
+SIN_RESPUESTA = "unavailable"
+
+# Dominios que no son dispositivos: no tiene sentido avisar que "se cayeron".
+DOMINIOS_QUE_NO_SON_APARATOS = {
+    "automation", "script", "scene", "person", "zone", "sun", "tts", "stt",
+    "conversation", "ai_task", "input_button", "input_boolean", "input_number",
+    "input_select", "input_text", "counter", "timer", "schedule", "todo",
+    "notify", "event", "image", "infrared", "radio_frequency", "button",
+    "device_tracker", "update", "tag", "assist_satellite",
+}
 
 # Al arrancar HA todo aparece caido unos segundos. No avisamos nada
 # hasta que pase esta gracia.
@@ -58,6 +70,23 @@ class Vigilante:
         self._ignoradas = set(opciones.get("entidades_ignoradas") or [])
         self._criticas = set(opciones.get("entidades_criticas") or [])
 
+        # Lo que ya estaba caido cuando arrancamos. No es noticia: si una
+        # camara lleva tres semanas desenchufada, avisarlo al prender el
+        # complemento no ayuda a nadie. Queda listado en el panel, callado.
+        self._linea_base: set[str] = set()
+        self._base_tomada = False
+
+    def tomar_linea_base(self) -> None:
+        """Se llama una sola vez, cuando HA ya mando todos los estados."""
+        if self._base_tomada:
+            return
+        self._linea_base = {
+            e for e in self.hogar.caidas(self._ignoradas) if self._interesa(e)
+        }
+        self._base_tomada = True
+        if self._linea_base:
+            log.info("%s entidades ya venian caidas; no se avisan", len(self._linea_base))
+
     # ------------------------------------------------------------ ajustes
 
     @property
@@ -71,9 +100,8 @@ class Vigilante:
     def _interesa(self, entidad: str) -> bool:
         if entidad in self._ignoradas:
             return False
-        # Los dominios que solo reflejan otra cosa no aportan nada como alerta.
         dominio = entidad.split(".", 1)[0]
-        return dominio not in ("automation", "script", "scene", "person", "zone", "sun", "tts")
+        return dominio not in DOMINIOS_QUE_NO_SON_APARATOS
 
     # ------------------------------------------------------------ entrada
 
@@ -85,12 +113,29 @@ class Vigilante:
             return
 
         estado = nuevo.get("state")
-        if estado in SIN_RESPUESTA:
+        if estado == SIN_RESPUESTA:
             self._caidas.setdefault(entidad, time.time())
-        elif entidad in self._caidas:
-            del self._caidas[entidad]
+        else:
+            self._caidas.pop(entidad, None)
+            # Si volvio, deja de ser parte del paisaje: la proxima vez que se
+            # caiga ya es noticia.
+            self._linea_base.discard(entidad)
 
     # -------------------------------------------------------------- ronda
+
+    def panorama(self) -> dict:
+        """Lo que muestra el panel. Tiene que coincidir con lo que vigilamos:
+        un panel que cuenta cosas por las que nunca avisaria no sirve."""
+        vigiladas = [e for e in self.hogar.todos() if self._interesa(e)]
+        caidas = [e for e in self.hogar.caidas(self._ignoradas) if self._interesa(e)]
+        return {
+            "vigiladas": len(vigiladas),
+            "caidas_nuevas": sorted(e for e in caidas if e not in self._linea_base),
+            "caidas_de_antes": sorted(e for e in caidas if e in self._linea_base),
+            "en_observacion": sorted(
+                e for e in self._caidas if e not in self._anunciadas and e not in self._linea_base
+            ),
+        }
 
     def revisar(self) -> list[Incidente]:
         """Se llama cada tanto. Devuelve lo que amerita contarle a Ariel."""
@@ -110,7 +155,7 @@ class Vigilante:
         criticas: list[str] = []
 
         for entidad, desde in self._caidas.items():
-            if entidad in self._anunciadas:
+            if entidad in self._anunciadas or entidad in self._linea_base:
                 continue
             es_critica = entidad in self._criticas
             espera = 30 if es_critica else self._espera

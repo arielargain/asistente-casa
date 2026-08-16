@@ -94,8 +94,9 @@ class Asistente:
     # ------------------------------------------------------- vigilancia
 
     async def rondas(self) -> None:
-        assert self.vigilante and self.agente and self.voz
-        await asyncio.sleep(20)
+        assert self.vigilante and self.agente and self.voz and self.hogar
+        await self.hogar.esperar_listo()
+        self.vigilante.tomar_linea_base()
         while True:
             try:
                 for incidente in self.vigilante.revisar():
@@ -161,35 +162,53 @@ class Asistente:
         return web.json_response({"respuesta": "Listo, autorizado por diez minutos."})
 
     async def h_estado(self, _pedido: web.Request) -> web.Response:
-        assert self.hogar and self.vigilante
-        return web.json_response(
-            {
-                "entidades": len(self.hogar.todos()),
-                "caidas_ahora": self.hogar.caidas(set(self.o.get("entidades_ignoradas") or [])),
-                "en_observacion": list(self.vigilante._caidas),
-                "bitacora": self.bitacora[-25:],
-                "autorizado": time.time() < self.permiso_hasta,
-            }
-        )
+        assert self.vigilante
+        datos = self.vigilante.panorama()
+        datos["bitacora"] = self.bitacora[-25:]
+        datos["autorizado"] = time.time() < self.permiso_hasta
+        return web.json_response(datos)
 
     async def h_panel(self, _pedido: web.Request) -> web.Response:
-        assert self.hogar
-        caidas = self.hogar.caidas(set(self.o.get("entidades_ignoradas") or []))
+        assert self.vigilante
+        p = self.vigilante.panorama()
+
+        def chips(lista: list[str], tope: int = 30) -> str:
+            if not lista:
+                return "<p class=ok>Nada.</p>"
+            resto = f" <span class=mas>y {len(lista) - tope} mas</span>" if len(lista) > tope else ""
+            return "<p>" + " ".join(f"<code>{c}</code>" for c in lista[:tope]) + resto + "</p>"
+
         filas = "".join(
             f"<tr><td>{time.strftime('%H:%M', time.localtime(b['cuando']))}</td>"
-            f"<td>{b['tipo']}</td><td>{b['texto'][:300]}</td></tr>"
+            f"<td>{b['tipo']}</td><td>{b['texto'][:400]}</td></tr>"
             for b in reversed(self.bitacora[-40:])
         )
         html = f"""<!doctype html><meta charset=utf-8>
 <title>Asistente</title>
 <style>
- body{{font:15px system-ui;margin:24px;max-width:900px}}
- h1{{font-size:20px}} td{{padding:6px 10px;border-bottom:1px solid #8883;vertical-align:top}}
- code{{background:#8882;padding:1px 5px;border-radius:4px}}
+ body{{font:15px/1.5 system-ui;margin:24px;max-width:900px}}
+ h1{{font-size:21px;margin-bottom:4px}} h2{{font-size:16px;margin-top:28px}}
+ td{{padding:6px 10px;border-bottom:1px solid #8883;vertical-align:top}}
+ code{{background:#8882;padding:1px 6px;border-radius:4px;font-size:13px}}
+ .ok{{opacity:.6}} .mas{{opacity:.6;font-size:13px}}
+ .sub{{opacity:.7;margin-top:0}}
 </style>
 <h1>Asistente de Ariel</h1>
-<p>{len(self.hogar.todos())} entidades vigiladas &middot; {len(caidas)} sin responder ahora.</p>
-<p>{" ".join(f"<code>{c}</code>" for c in caidas[:25]) or "Todo responde."}</p>
+<p class=sub>{p['vigiladas']} entidades vigiladas.
+Se cuenta solo <code>unavailable</code>: <code>unknown</code> es el estado normal
+de los botones, los emisores y los motores de voz, no una caida.</p>
+
+<h2>Caidas nuevas ({len(p['caidas_nuevas'])})</h2>
+{chips(p['caidas_nuevas'])}
+
+<h2>En observacion ({len(p['en_observacion'])})</h2>
+<p class=sub>Se cayeron recien; todavia no cumplieron la espera para avisar.</p>
+{chips(p['en_observacion'])}
+
+<h2>Ya venian caidas ({len(p['caidas_de_antes'])})</h2>
+<p class=sub>Estaban asi cuando arranque. No se avisan, pero aca estan.</p>
+{chips(p['caidas_de_antes'])}
+
 <h2>Bitacora</h2><table>{filas or "<tr><td>Sin novedades.</td></tr>"}</table>"""
         return web.Response(text=html, content_type="text/html")
 

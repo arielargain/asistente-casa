@@ -80,12 +80,17 @@ class Hogar:
         return dict(self._estados)
 
     def caidas(self, ignorar: set[str] | None = None) -> list[str]:
-        """Entidades que ahora mismo estan sin responder."""
+        """Entidades que ahora mismo no responden.
+
+        Solo cuenta 'unavailable'. 'unknown' NO es una caida: para los botones,
+        los emisores de infrarrojo, los motores de voz y varios tipos mas, es
+        su estado normal de reposo y nunca cambia.
+        """
         ignorar = ignorar or set()
         return [
             e
             for e, st in self._estados.items()
-            if st.get("state") in ("unavailable", "unknown") and e not in ignorar
+            if st.get("state") == "unavailable" and e not in ignorar
         ]
 
     # ----------------------------------------------------------- websocket

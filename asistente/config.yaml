@@ -1,5 +1,5 @@
 name: Asistente de Ariel
-version: "0.1.1"
+version: "0.1.2"
 slug: asistente
 description: Agente proactivo de la casa. Vigila los dispositivos, avisa por el parlante cuando algo se cae y ayuda a resolverlo.
 url: https://github.com/arielargain/asistente-casa
