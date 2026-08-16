@@ -265,6 +265,9 @@ voice_assistant:
         data:
           entity_id: media_player.dormitorio
           media_content_type: music
+          # announce despierta el parlante. Sin esto, un Google dormido no
+          # reproduce nada y la respuesta se pierde en silencio.
+          announce: "true"
         data_template:
           media_content_id: "{{ url }}"
         variables:
