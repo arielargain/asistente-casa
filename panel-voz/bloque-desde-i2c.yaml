@@ -62,19 +62,6 @@ microphone:
 # --------------------------------------------------------------- pantalla
 
 switch:
-  # La luz de la pantalla, por separado y siempre encendida. Los pines del
-  # expansor arrancan como entrada si no se los declara salida: por eso la
-  # pantalla quedaba negra aunque el driver de video estuviera dibujando.
-  - platform: gpio
-    id: luz_pantalla
-    internal: true
-    restore_mode: ALWAYS_ON
-    pin:
-      ch422g: expansor
-      number: 2
-      mode:
-        output: true
-
   # Apagado: funciona por palabra de activacion, como una bocina comun.
   # Prendido: despues de responder reabre el microfono para contestar sin
   # repetir "okay nabu". Con tope de dos veces seguidas.
@@ -114,8 +101,9 @@ display:
     reset_pin:
       ch422g: expansor
       number: 3
-      mode:
-        output: true
+    enable_pin:
+      ch422g: expansor
+      number: 2
     hsync_back_porch: 16
     hsync_front_porch: 16
     hsync_pulse_width: 8
