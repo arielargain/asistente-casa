@@ -1,0 +1,171 @@
+# ---------------------------------------------------------------------------
+# Panel de voz — todo lo que va DESPUES de captive_portal.
+# Reemplaza desde la linea "i2c:" hasta el final del archivo.
+# NO toques nada de lo que esta arriba de i2c: ahi viven la clave de cifrado,
+# la contrasenia de OTA y el wifi.
+# ---------------------------------------------------------------------------
+
+i2c:
+  - id: bus_a
+    sda: GPIO8
+    scl: GPIO9
+    scan: true
+    frequency: 400kHz
+
+audio_adc:
+  - platform: es7210
+    id: mic_adc
+    i2c_id: bus_a
+    address: 0x40
+    bits_per_sample: 16bit
+    # Antes estaba en 24dB. Con la tele prendida eso hacia que el ambiente
+    # entrara tan fuerte como la voz de Ariel. Menos ganancia = el microfono
+    # privilegia lo cercano.
+    mic_gain: 18dB
+    sample_rate: 16000
+
+i2s_audio:
+  - id: i2s_bus
+    i2s_lrclk_pin: GPIO16
+    i2s_bclk_pin: GPIO44
+    i2s_mclk_pin: GPIO6
+
+microphone:
+  - platform: i2s_audio
+    id: mic
+    i2s_audio_id: i2s_bus
+    i2s_din_pin: GPIO43
+    adc_type: external
+    pdm: false
+    # channel: right es obligatorio en esta placa. Con left se graba un canal
+    # mudo: no detecta la palabra y el boton manual tampoco transcribe nada.
+    channel: right
+    use_apll: true
+    bits_per_sample: 16bit
+    sample_rate: 16000
+
+globals:
+  # Hubo voz de verdad en el turno anterior.
+  - id: hubo_voz
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+  # Cuantas veces seguidas reabrio el microfono solo. Es el freno de mano
+  # del bucle: sin esto, con la tele prendida no para nunca.
+  - id: seguidas
+    type: int
+    restore_value: no
+    initial_value: '0'
+  # Modo conversacion. Se prende y apaga desde Home Assistant.
+  - id: conversar
+    type: bool
+    restore_value: yes
+    initial_value: 'false'
+
+micro_wake_word:
+  id: mww
+  microphone:
+    microphone: mic
+    channels: 0
+    # Antes 2. Multiplicaba una ganancia que ya venia alta.
+    gain_factor: 1
+  models:
+    - model: okay_nabu
+  vad:
+  on_wake_word_detected:
+    - voice_assistant.start:
+        wake_word: !lambda return wake_word;
+
+switch:
+  # Este es el interruptor que aparece en Home Assistant.
+  # Apagado: funciona por palabra de activacion, como una bocina comun.
+  # Prendido: despues de responder reabre el microfono para que Ariel
+  # conteste sin repetir "okay nabu".
+  - platform: template
+    name: "Conversacion continua"
+    id: sw_conversar
+    icon: mdi:forum
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    lambda: 'return id(conversar);'
+    turn_on_action:
+      - lambda: 'id(conversar) = true;'
+    turn_off_action:
+      - lambda: |-
+          id(conversar) = false;
+          id(seguidas) = 0;
+
+voice_assistant:
+  id: va
+  microphone: mic
+  noise_suppression_level: 2
+  # Antes 15dBFS. Bajarlo evita que amplifique el ruido de fondo hasta que
+  # parezca voz.
+  auto_gain: 9dBFS
+  volume_multiplier: 1.0
+
+  on_client_connected:
+    - micro_wake_word.start:
+  on_client_disconnected:
+    - micro_wake_word.stop:
+
+  on_listening:
+    - homeassistant.action:
+        action: tts.speak
+        data:
+          entity_id: tts.piper
+          media_player_entity_id: media_player.dormitorio
+          # Corto a proposito: si se activa de mas, que moleste poco.
+          message: "Si"
+          cache: "true"
+
+  on_stt_end:
+    - lambda: 'id(hubo_voz) = true;'
+
+  on_error:
+    - lambda: |-
+        id(hubo_voz) = false;
+        id(seguidas) = 0;
+
+  on_tts_end:
+    # Mientras suena la respuesta el microfono tiene que estar cerrado: sale
+    # por el parlante del dormitorio y si no, se escucha a si misma y arranca
+    # de nuevo. Ese era el bucle.
+    - micro_wake_word.stop:
+    - homeassistant.action:
+        action: media_player.play_media
+        data:
+          entity_id: media_player.dormitorio
+          media_content_type: music
+        data_template:
+          media_content_id: "{{ url }}"
+        variables:
+          url: !lambda 'return x;'
+
+  on_end:
+    # Se le da tiempo al parlante a terminar antes de volver a escuchar.
+    - delay: 7s
+    - if:
+        condition:
+          lambda: 'return id(conversar) && id(hubo_voz) && id(seguidas) < 2;'
+        then:
+          - lambda: |-
+              id(hubo_voz) = false;
+              id(seguidas) += 1;
+          - voice_assistant.start:
+        else:
+          - lambda: |-
+              id(hubo_voz) = false;
+              id(seguidas) = 0;
+          - micro_wake_word.start:
+
+button:
+  - platform: template
+    name: "Escuchame ahora"
+    id: btn_escuchar
+    icon: mdi:microphone
+    on_press:
+      - voice_assistant.stop:
+      - lambda: 'id(seguidas) = 0;'
+      - delay: 300ms
+      - voice_assistant.start:
