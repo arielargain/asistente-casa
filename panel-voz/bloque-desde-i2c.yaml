@@ -81,7 +81,7 @@ rtttl:
 display:
   - platform: rpi_dpi_rgb
     id: pantalla
-    update_interval: 1s
+    update_interval: never
     auto_clear_enabled: false
     color_order: RGB
     pclk_frequency: 16MHZ
