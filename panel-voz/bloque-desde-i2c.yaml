@@ -4,7 +4,15 @@
 # NO toques nada de lo que esta arriba de i2c: ahi viven la clave de cifrado,
 # la contrasenia de OTA y el wifi.
 #
-# v2: se enciende la bocina de la placa y la pantalla.
+# v3: se saca la bocina de la placa y se insiste con la pantalla.
+#
+# POR QUE SE SACO LA BOCINA:
+# El microfono y el parlante comparten el mismo bus I2S, y micro_wake_word
+# escucha sin parar, asi que nunca lo suelta:
+#     [E][i2s_audio.speaker.std]: Parent bus is busy
+#     Driver failed to start; retrying in 1 second
+# Reintentaba una vez por segundo, para siempre. Hasta resolver eso, las
+# respuestas vuelven a salir por el parlante del dormitorio, que funcionaba.
 # ---------------------------------------------------------------------------
 
 i2c:
@@ -15,11 +23,10 @@ i2c:
     frequency: 400kHz
 
 # El expansor de I/O. La pantalla se comio casi todos los pines del micro, asi
-# que el reset del tactil, el reset del panel, la luz de la pantalla y el
-# amplificador del parlante cuelgan todos de este chip.
+# que el reset del tactil, el reset del panel y la luz de la pantalla cuelgan
+# todos de este chip.
 ch422g:
   - id: expansor
-    i2c_id: bus_a
 
 # --------------------------------------------------------------- audio
 
@@ -30,14 +37,6 @@ audio_adc:
     address: 0x40
     bits_per_sample: 16bit
     mic_gain: 18dB
-    sample_rate: 16000
-
-audio_dac:
-  - platform: es8311
-    id: dac_parlante
-    i2c_id: bus_a
-    address: 0x18
-    bits_per_sample: 16bit
     sample_rate: 16000
 
 i2s_audio:
@@ -60,23 +59,38 @@ microphone:
     bits_per_sample: 16bit
     sample_rate: 16000
 
-speaker:
-  - platform: i2s_audio
-    id: parlante
-    i2s_audio_id: i2s_bus
-    dac_type: external
-    i2s_dout_pin: GPIO15
-    audio_dac: dac_parlante
-    sample_rate: 16000
-    bits_per_sample: 16bit
-    channel: mono
-
-# El pitido que pediste, ahora que hay bocina propia.
-rtttl:
-  id: tono
-  speaker: parlante
-
 # --------------------------------------------------------------- pantalla
+
+switch:
+  # La luz de la pantalla, por separado y siempre encendida. Los pines del
+  # expansor arrancan como entrada si no se los declara salida: por eso la
+  # pantalla quedaba negra aunque el driver de video estuviera dibujando.
+  - platform: gpio
+    id: luz_pantalla
+    internal: true
+    restore_mode: ALWAYS_ON
+    pin:
+      ch422g: expansor
+      number: 2
+      mode:
+        output: true
+
+  # Apagado: funciona por palabra de activacion, como una bocina comun.
+  # Prendido: despues de responder reabre el microfono para contestar sin
+  # repetir "okay nabu". Con tope de dos veces seguidas.
+  - platform: template
+    name: "Conversacion continua"
+    id: sw_conversar
+    icon: mdi:forum
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    lambda: 'return id(conversar);'
+    turn_on_action:
+      - lambda: 'id(conversar) = true;'
+    turn_off_action:
+      - lambda: |-
+          id(conversar) = false;
+          id(seguidas) = 0;
 
 display:
   - platform: rpi_dpi_rgb
@@ -100,9 +114,8 @@ display:
     reset_pin:
       ch422g: expansor
       number: 3
-    enable_pin:
-      ch422g: expansor
-      number: 2
+      mode:
+        output: true
     hsync_back_porch: 16
     hsync_front_porch: 16
     hsync_pulse_width: 8
@@ -197,43 +210,9 @@ micro_wake_word:
     - voice_assistant.start:
         wake_word: !lambda return wake_word;
 
-switch:
-  # El amplificador del parlante se enciende por el expansor, no por un pin del
-  # micro. ALWAYS_ON lo levanta solo en cada arranque; sin esto la placa
-  # "habla" pero no sale sonido. internal: no aparece en Home Assistant.
-  - platform: gpio
-    id: amplificador
-    internal: true
-    restore_mode: ALWAYS_ON
-    pin:
-      ch422g: expansor
-      number: 4
-      mode:
-        output: true
-
-  # Apagado: funciona por palabra de activacion, como una bocina comun.
-  # Prendido: despues de responder reabre el microfono para contestar sin
-  # repetir "okay nabu". Con tope de dos veces seguidas.
-  - platform: template
-    name: "Conversacion continua"
-    id: sw_conversar
-    icon: mdi:forum
-    optimistic: true
-    restore_mode: RESTORE_DEFAULT_OFF
-    lambda: 'return id(conversar);'
-    turn_on_action:
-      - lambda: 'id(conversar) = true;'
-    turn_off_action:
-      - lambda: |-
-          id(conversar) = false;
-          id(seguidas) = 0;
-
 voice_assistant:
   id: va
   microphone: mic
-  # Ahora la respuesta sale por la bocina de la placa. Se termina el rodeo por
-  # el parlante del dormitorio, que era la mitad del problema de realimentacion.
-  speaker: parlante
   noise_suppression_level: 2
   auto_gain: 9dBFS
   volume_multiplier: 1.0
@@ -248,11 +227,18 @@ voice_assistant:
     - micro_wake_word.stop:
 
   on_listening:
-    - rtttl.play: "beep:d=32,o=6,b=200:c"
     - script.execute:
         id: mostrar
         arriba: "Te escucho"
         abajo: "hablame"
+    - homeassistant.action:
+        action: tts.speak
+        data:
+          entity_id: tts.piper
+          media_player_entity_id: media_player.dormitorio
+          # Corto a proposito: si se activa de mas, que moleste poco.
+          message: "Si"
+          cache: "true"
 
   on_stt_end:
     - lambda: 'id(hubo_voz) = true;'
@@ -268,9 +254,26 @@ voice_assistant:
     - script.execute:
         id: mostrar
         arriba: "No te entendi"
-        abajo: "probá de nuevo"
+        abajo: "proba de nuevo"
+
+  on_tts_end:
+    # Mientras suena la respuesta el microfono queda cerrado: sale por el
+    # parlante del dormitorio y si no, se escucha a si misma y arranca de
+    # nuevo. Ese era el bucle.
+    - micro_wake_word.stop:
+    - homeassistant.action:
+        action: media_player.play_media
+        data:
+          entity_id: media_player.dormitorio
+          media_content_type: music
+        data_template:
+          media_content_id: "{{ url }}"
+        variables:
+          url: !lambda 'return x;'
 
   on_end:
+    # Se le da tiempo al parlante a terminar antes de volver a escuchar.
+    - delay: 7s
     - if:
         condition:
           lambda: 'return id(conversar) && id(hubo_voz) && id(seguidas) < 2;'
