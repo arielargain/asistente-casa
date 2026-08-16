@@ -1,0 +1,53 @@
+name: Asistente de Ariel
+version: "0.1.0"
+slug: asistente
+description: Agente proactivo de la casa. Vigila los dispositivos, avisa por el parlante cuando algo se cae y ayuda a resolverlo.
+url: https://github.com/arielargain/asistente-casa
+arch:
+  - amd64
+init: false
+startup: application
+boot: auto
+hassio_api: true
+hassio_role: manager
+homeassistant_api: true
+auth_api: true
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:head-cog
+panel_title: Asistente
+map:
+  - config:rw
+  - share:rw
+  - ssl:ro
+options:
+  clave_anthropic: ""
+  modelo: claude-sonnet-5
+  parlante: media_player.dormitorio
+  voz: tts.piper
+  minutos_para_avisar: 5
+  minutos_entre_avisos: 120
+  hablar_solo_criticos_de_madrugada: false
+  permitir_sin_preguntar:
+    - diagnosticar
+    - recargar_integracion
+    - reiniciar_complemento
+    - buscar
+  entidades_criticas:
+    - binary_sensor.alarma
+  entidades_ignoradas:
+    - sensor.fecha
+schema:
+  clave_anthropic: password
+  modelo: str
+  parlante: str
+  voz: str
+  minutos_para_avisar: int(1,120)
+  minutos_entre_avisos: int(5,1440)
+  hablar_solo_criticos_de_madrugada: bool
+  permitir_sin_preguntar:
+    - str
+  entidades_criticas:
+    - str
+  entidades_ignoradas:
+    - str
