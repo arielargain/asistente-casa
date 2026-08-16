@@ -100,6 +100,23 @@ switch:
           id(conversar) = false;
           id(seguidas) = 0;
 
+# LA PIEZA QUE DESTRABA EL EXPANSOR.
+# El CH422G arranca en modo entrada y su modo se fija una sola vez, en el
+# setup del expansor — que corre ANTES que los pines que lo usan. Resultado:
+# cuando se fija el modo todavia nadie declaro pines de salida, el chip queda
+# en entrada, y las escrituras no dan error pero no mueven nada.
+# read_inputs_() reescribe el modo en cada lectura. Con esta sonda leyendose
+# sola, el chip queda en modo salida de forma permanente.
+binary_sensor:
+  - platform: gpio
+    id: sonda_expansor
+    internal: true
+    pin:
+      ch422g: expansor
+      number: 5
+      mode:
+        input: true
+
 display:
   - platform: rpi_dpi_rgb
     id: pantalla
@@ -227,6 +244,10 @@ voice_assistant:
 
   on_client_connected:
     - micro_wake_word.start:
+    # Se vuelve a mandar la luz y se redibuja: esto corre mucho despues del
+    # arranque, cuando la sonda ya dejo al expansor en modo salida.
+    - switch.turn_on: luz_pantalla
+    - delay: 500ms
     - script.execute:
         id: mostrar
         arriba: "Okay Nabu"
@@ -284,9 +305,10 @@ voice_assistant:
         data:
           entity_id: media_player.dormitorio
           media_content_type: music
-          # announce despierta el parlante. Sin esto, un Google dormido no
-          # reproduce nada y la respuesta se pierde en silencio.
-          announce: "true"
+          # SIN announce a proposito. En un Google, announce esta pensado para
+          # avisos cortos: con una respuesta larga descarta el audio y no suena
+          # nada, aunque el texto haya llegado bien. Al parlante ya lo desperto
+          # el pitido de on_stt_end, que suena unos segundos antes.
         data_template:
           media_content_id: "{{ url }}"
         variables:
