@@ -24,8 +24,6 @@ class CH422GComponent : public Component, public i2c::I2CDevice {
 
   float get_setup_priority() const override;
 
-  float get_loop_priority() const override;
-
   void dump_config() override;
 
   void set_restore_value(bool restore_value) { this->restore_value_ = restore_value; }
