@@ -2,40 +2,22 @@
 # la linea "friendly_name: Panel de voz". No reemplaza nada: se agrega.
 #
 # Prioridad 950: el bus I2C ya arranco (prioridad 1000) pero la pantalla y el
-# tactil todavia no. Es la unica ventana donde sirve.
-#
-# Esta version NO asume nada: mira el codigo de error de cada escritura y lo
-# escribe en el registro. Tambien lee de vuelta lo que quedo grabado, que es
-# la unica forma de saber si el chip realmente acepta ordenes.
+# tactil todavia no. Es la unica ventana util: un tactil que arranca con el
+# reset apretado queda marcado como fallado y no se recupera solo.
   on_boot:
     - priority: 950
       then:
         - lambda: |-
-            const char *T = "EXPANSOR";
-            uint8_t modo = 0x01;   // los ocho IO0-7 a salida, todos juntos
-            auto e1 = id(bus_a)->write(0x24, &modo, 1);
-            ESP_LOGI(T, "escribir modo 0x01 en 0x24 -> codigo %d (0 = ok)", (int) e1);
+            // CH422G por I2C directo, como hace el firmware de fabrica.
+            // Cada "registro" de este chip es una direccion I2C distinta.
+            // 0x24 = modo; 0x01 = los ocho IO0-7 a salida, todos juntos.
+            const uint8_t modo = 0x01;
+            id(bus_a)->write(0x24, &modo, 1);
             delay(5);
-
+            // 0x38 = salidas 0-7:
             //   bit 1 -> EXIO1: suelta el reset del tactil
             //   bit 2 -> EXIO2: enciende luz + DISP de la pantalla
             //   bit 4 -> EXIO4: habilita el amplificador
-            uint8_t salidas = (1 << 1) | (1 << 2) | (1 << 4);   // 0x16
-            auto e2 = id(bus_a)->write(0x38, &salidas, 1);
-            ESP_LOGI(T, "escribir salidas 0x16 en 0x38 -> codigo %d (0 = ok)", (int) e2);
+            const uint8_t salidas = (1 << 1) | (1 << 2) | (1 << 4);
+            id(bus_a)->write(0x38, &salidas, 1);
             delay(20);
-
-            // La prueba de fuego: leer de vuelta. Si el chip acepta ordenes,
-            // esto tiene que devolver algo coherente y no un error.
-            uint8_t leido = 0xFF;
-            auto e3 = id(bus_a)->read(0x26, &leido, 1);
-            ESP_LOGI(T, "leer entradas de 0x26 -> codigo %d, valor 0x%02X", (int) e3, leido);
-
-            // Y probar apagar y prender la luz, mirando si contesta distinto.
-            uint8_t apagado = 0x00;
-            auto e4 = id(bus_a)->write(0x38, &apagado, 1);
-            ESP_LOGI(T, "apagar todo -> codigo %d", (int) e4);
-            delay(300);
-            auto e5 = id(bus_a)->write(0x38, &salidas, 1);
-            ESP_LOGI(T, "prender de nuevo -> codigo %d", (int) e5);
-            ESP_LOGI(T, "RESUMEN: si todos los codigos son 0, el chip acepta ordenes.");

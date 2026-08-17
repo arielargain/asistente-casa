@@ -116,20 +116,34 @@ script:
   # ESTA ES LA PIEZA CLAVE. Se le escribe al CH422G por I2C directo, igual que
   # el firmware de fabrica. En este chip cada "registro" es una direccion I2C
   # distinta, por eso van dos escrituras a direcciones diferentes.
+  # Le escribe al CH422G por I2C directo Y PUBLICA EL RESULTADO en Home
+  # Assistant. Sin esto habia que cazar los mensajes en la ventana de registro
+  # justo en el arranque, que es imposible de sincronizar.
   - id: despertar_expansor
     then:
       - lambda: |-
-          // 0x24 = registro de modo. 0x01 = los ocho IO0-7 pasan a salida.
-          // Tiene que ser el banco entero: el chip no admite mezclar.
-          const uint8_t modo = 0x01;
-          id(bus_a)->write(0x24, &modo, 1);
+          char buf[160];
+          uint8_t modo = 0x01;                                   // banco a salida
+          auto e1 = id(bus_a)->write(0x24, &modo, 1);
           delay(5);
-          // 0x38 = salidas 0-7. Bit 1 suelta el reset del tactil, bit 2
-          // enciende luz + DISP, bit 4 habilita el amplificador.
-          const uint8_t salidas = (1 << 1) | (1 << 2) | (1 << 4);   // 0x16
-          id(bus_a)->write(0x38, &salidas, 1);
+          uint8_t salidas = (1 << 1) | (1 << 2) | (1 << 4);      // 0x16
+          auto e2 = id(bus_a)->write(0x38, &salidas, 1);
+          delay(5);
+          uint8_t leido = 0xFF;                                  // leer de vuelta
+          auto e3 = id(bus_a)->read(0x26, &leido, 1);
+          snprintf(buf, sizeof(buf),
+                   "modo=%d salidas=%d lectura=%d valor=0x%02X %s",
+                   (int) e1, (int) e2, (int) e3, leido,
+                   (e1 == 0 && e2 == 0) ? "-> ACEPTA" : "-> RECHAZA");
+          id(diag_expansor).publish_state(buf);
       - delay: 100ms
       - component.update: pantalla
+
+text_sensor:
+  - platform: template
+    name: "Diagnostico expansor"
+    id: diag_expansor
+    update_interval: never
 
   - id: mostrar
     parameters:
