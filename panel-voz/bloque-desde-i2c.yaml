@@ -4,11 +4,23 @@
 # NO toques nada de lo que esta arriba de i2c: ahi viven la clave de cifrado,
 # la contrasenia de OTA y el wifi.
 #
-# v9: SIN la bocina de la placa. Comprobado en el log: microfono y parlante
-# NO pueden compartir el bus I2S en esta version de ESPHome, sin importar como
-# se configure el codec. Da 'Parent bus is busy' una vez por segundo, para
-# siempre, y ese bucle es lo que colgo la placa una hora. Ver issue 16043.
-# La respuesta vuelve al parlante del dormitorio, que funciona.
+# v10: se le habla al expansor por I2C DIRECTO y el parlante va en el SEGUNDO
+# periferico I2S.
+#
+# EL DATO QUE DESTRABA TODO, de la libreria oficial de Waveshare, en un ejemplo
+# escrito para esta placa exacta (ESP32-S3-Touch-LCD-4.3B-BOX):
+#
+#   "The input/output mode of CH422G's IO0-7 must remain consistent...
+#    Using pinMode and multiPinMode will be invalid. You can only set the pin
+#    working mode through enableAllIO_Input, enableAllIO_Output..."
+#
+# Los ocho pines son TODOS entrada o TODOS salida, y fijar el modo pin por pin
+# —que es justo lo que hace ESPHome— NO TIENE EFECTO. Por eso ninguna escritura
+# movia nada, y por eso la sonda de entrada fue catastrofica: declaraba un pin
+# como entrada en un banco que tenia que ser todo salida.
+#
+# La solucion es saltear el componente y escribirle al chip como hace el
+# firmware de fabrica. I2CBus::write() es publico en ESPHome.
 #
 # LO QUE SE APRENDIO INVESTIGANDO (y corrige varios supuestos anteriores):
 #
@@ -83,30 +95,6 @@ microphone:
 # --------------------------------------------------------------- expansor
 
 switch:
-  # Luz de la pantalla. EXIO2 maneja la luz y el DISP juntos.
-  - platform: gpio
-    name: "Luz de pantalla"
-    id: luz_pantalla
-    icon: mdi:television
-    restore_mode: ALWAYS_ON
-    pin:
-      ch422g: expansor
-      number: 2
-      mode:
-        output: true
-
-  # Amplificador del parlante de la placa (PA_CTRL, comparte pin con SD_CS).
-  - platform: gpio
-    name: "Amplificador"
-    id: amplificador
-    icon: mdi:volume-high
-    restore_mode: ALWAYS_ON
-    pin:
-      ch422g: expansor
-      number: 4
-      mode:
-        output: true
-
   # Apagado: funciona por palabra de activacion, como una bocina comun.
   # Prendido: despues de responder reabre el microfono para contestar sin
   # repetir "okay nabu". Con tope de dos veces seguidas.
@@ -125,14 +113,21 @@ switch:
           id(seguidas) = 0;
 
 script:
-  # ESTA ES LA PIEZA CLAVE DE TODO. Una sola lectura del expansor empuja el
-  # modo salida al chip; recien despues tiene sentido escribir los pines.
+  # ESTA ES LA PIEZA CLAVE. Se le escribe al CH422G por I2C directo, igual que
+  # el firmware de fabrica. En este chip cada "registro" es una direccion I2C
+  # distinta, por eso van dos escrituras a direcciones diferentes.
   - id: despertar_expansor
     then:
-      - lambda: 'id(expansor)->digital_read(0);'
-      - delay: 50ms
-      - switch.turn_on: luz_pantalla
-      - switch.turn_on: amplificador
+      - lambda: |-
+          // 0x24 = registro de modo. 0x01 = los ocho IO0-7 pasan a salida.
+          // Tiene que ser el banco entero: el chip no admite mezclar.
+          const uint8_t modo = 0x01;
+          id(bus_a)->write(0x24, &modo, 1);
+          delay(5);
+          // 0x38 = salidas 0-7. Bit 1 suelta el reset del tactil, bit 2
+          // enciende luz + DISP, bit 4 habilita el amplificador.
+          const uint8_t salidas = (1 << 1) | (1 << 2) | (1 << 4);   // 0x16
+          id(bus_a)->write(0x38, &salidas, 1);
       - delay: 100ms
       - component.update: pantalla
 
@@ -195,11 +190,7 @@ touchscreen:
     address: 0x14
     update_interval: 20ms
     interrupt_pin: GPIO4
-    reset_pin:
-      ch422g: expansor
-      number: 1
-      mode:
-        output: true
+    # Sin reset_pin: lo suelta el script despertar_expansor por I2C directo.
     on_touch:
       - if:
           condition:
