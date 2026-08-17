@@ -296,7 +296,7 @@ voice_assistant:
         data:
           entity_id: tts.piper
           media_player_entity_id: media_player.dormitorio
-          message: "Si"
+          message: "Te escucho"
           cache: "true"
 
   on_stt_end:
@@ -310,7 +310,7 @@ voice_assistant:
         data:
           entity_id: tts.piper
           media_player_entity_id: media_player.dormitorio
-          message: "Dale"
+          message: "Entendido"
           cache: "true"
 
   on_tts_end:
