@@ -56,6 +56,12 @@ class Voz:
     def historial(self, cuantos: int = 30) -> list[tuple[float, str]]:
         return self._dicho[-cuantos:]
 
+    def tomar_callado(self) -> list[tuple[float, str]]:
+        """Devuelve lo silenciado por horario y lo vacia: es para el parte."""
+        pendiente = list(self.callado)
+        self.callado.clear()
+        return pendiente
+
     async def correr(self) -> None:
         while True:
             texto, proactivo = await self._cola.get()

@@ -112,7 +112,21 @@ def herramientas_de_la_casa(hogar: Hogar, opciones: dict):
         r = await hogar.supervisor(f"/addons/{args['slug']}/restart", "POST")
         return {"content": [{"type": "text", "text": json.dumps(r, ensure_ascii=False)[:800]}]}
 
-    @tool("buscar_en_mis_notas", "Busca por significado en el segundo cerebro de Ariel: sus proyectos, decisiones y documentacion de la casa", {"consulta": str})
+    @tool("listar_integraciones", "Lista las integraciones de Home Assistant con su estado y entry_id, para diagnosticar o recargar", {})
+    async def listar_integraciones(_args: dict[str, Any]) -> dict:
+        r = await hogar.config_ha("config_entries/entry")
+        lista = [
+            {"entry_id": e.get("entry_id"), "dominio": e.get("domain"), "titulo": e.get("title"), "estado": e.get("state")}
+            for e in (r if isinstance(r, list) else [])
+        ]
+        return {"content": [{"type": "text", "text": json.dumps(lista, ensure_ascii=False)[:6000]}]}
+
+    @tool("recargar_integracion", "Recarga una integracion de Home Assistant por su entry_id (auto-reparacion: util cuando una integracion quedo colgada)", {"entry_id": str})
+    async def recargar_integracion(args: dict[str, Any]) -> dict:
+        r = await hogar.config_ha(f"config_entries/entry/{args['entry_id']}/reload", "POST")
+        return {"content": [{"type": "text", "text": json.dumps(r, ensure_ascii=False, default=str)[:500]}]}
+
+        @tool("buscar_en_mis_notas", "Busca por significado en el segundo cerebro de Ariel: sus proyectos, decisiones y documentacion de la casa", {"consulta": str})
     async def buscar_en_mis_notas(args: dict[str, Any]) -> dict:
         texto = await buscar_en_el_cerebro(str(args["consulta"]))
         return {"content": [{"type": "text", "text": texto}]}
@@ -127,6 +141,8 @@ def herramientas_de_la_casa(hogar: Hogar, opciones: dict):
             registro_de_home_assistant,
             complementos,
             reiniciar_complemento,
+            listar_integraciones,
+            recargar_integracion,
             buscar_en_mis_notas,
         ],
     )

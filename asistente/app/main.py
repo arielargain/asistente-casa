@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import aiohttp
@@ -74,6 +75,10 @@ class Asistente:
 
         libres_extra = set(self.o.get("permitir_sin_preguntar") or [])
         if herramienta == "mcp__casa__reiniciar_complemento" and "reiniciar_complemento" in libres_extra:
+            return {"behavior": "allow", "updatedInput": entrada}
+        if herramienta == "mcp__casa__recargar_integracion" and "recargar_integracion" in libres_extra:
+            return {"behavior": "allow", "updatedInput": entrada}
+        if herramienta == "mcp__casa__listar_integraciones":
             return {"behavior": "allow", "updatedInput": entrada}
 
         if time.time() < self.permiso_hasta:
@@ -175,6 +180,106 @@ class Asistente:
                 await self.hogar.llamar_servicio("script", "reload", {})
         except Exception:  # noqa: BLE001
             log.exception("no pude soltar los candados")
+
+    # ---------------------------------------------------- parte diario 11:30
+
+    async def parte_diario(self) -> None:
+        """Una vez al dia, despues del silencio nocturno, cuenta lo que paso.
+
+        Es la pieza "informar" del guardian: lo que se callo de noche, los
+        incidentes del dia, el autochequeo del propio sistema, el consumo y
+        la agenda. Todo en un solo mensaje hablado, corto.
+        """
+        assert self.hogar
+        await self.hogar.esperar_listo()
+        while True:
+            ahora = datetime.now()
+            hhmm = str(self.o.get("hora_parte", "11:30"))
+            try:
+                h, m = [int(x) for x in hhmm.split(":")]
+            except ValueError:
+                h, m = 11, 30
+            # jamas antes de las 11: es la regla dura de silencio
+            if h < 11:
+                h, m = 11, 30
+            objetivo = ahora.replace(hour=h, minute=m, second=0, microsecond=0)
+            if ahora >= objetivo:
+                objetivo += timedelta(days=1)
+            await asyncio.sleep((objetivo - ahora).total_seconds())
+            try:
+                await self._dar_parte()
+            except Exception:  # noqa: BLE001
+                log.exception("el parte diario fallo")
+
+    async def _autochequeo(self) -> list[str]:
+        """El guardian se toma el pulso. Devuelve solo lo que esta MAL."""
+        assert self.hogar
+        fallas: list[str] = []
+        est = self.hogar.estado("assist_satellite.panel_de_voz_satelite_assist")
+        if not est or est.get("state") in ("unavailable", "unknown"):
+            fallas.append("el panel de voz no responde")
+        parl = self.hogar.estado(self.o.get("parlante", "media_player.dormitorio"))
+        if not parl or parl.get("state") == "unavailable":
+            fallas.append("el parlante del dormitorio no responde")
+        caidas = [
+            e for e in self.hogar.caidas(set(self.o.get("entidades_ignoradas") or []))
+            if e.startswith("camera.")
+        ]
+        if len(caidas) >= 3:
+            fallas.append(f"hay {len(caidas)} camaras sin responder")
+        try:
+            r = await self.hogar.supervisor("/backups")
+            lista = (r.get("data") or r).get("backups") or []
+            fechas = sorted(b.get("date", "") for b in lista)
+            if not fechas:
+                fallas.append("no hay ningun backup de Home Assistant")
+            else:
+                ultimo = fechas[-1][:10]
+                dias = (datetime.now() - datetime.fromisoformat(ultimo)).days
+                if dias > 3:
+                    fallas.append(f"el ultimo backup tiene {dias} dias")
+        except Exception:  # noqa: BLE001
+            fallas.append("no pude verificar los backups")
+        return fallas
+
+    async def _dar_parte(self) -> None:
+        assert self.agente and self.voz
+        fallas = await self._autochequeo()
+        callado = self.voz.tomar_callado()
+        hace24 = time.time() - 24 * 3600
+        incidentes = [
+            b for b in self.bitacora
+            if b["cuando"] > hace24 and b["tipo"] != "encargo" and b.get("texto")
+        ]
+        partes: list[str] = []
+        if fallas:
+            partes.append("FALLAS DEL AUTOCHEQUEO (decilas primero): " + "; ".join(fallas))
+        if callado:
+            avisos = " | ".join(x[1][:120] for x in callado[-8:])
+            partes.append(f"AVISOS SILENCIADOS DE ANOCHE ({len(callado)}): {avisos}")
+        if incidentes:
+            resumen = " | ".join(f"{b['tipo']}: {b['texto'][:100]}" for b in incidentes[-6:])
+            partes.append(f"INCIDENTES DE LAS ULTIMAS 24H: {resumen}")
+        contexto = "
+".join(partes) if partes else "Sin fallas, sin avisos silenciados y sin incidentes."
+        pedido = (
+            "Es el parte diario de la casa para Ariel. Datos crudos:
+" + contexto +
+            "
+
+Ademas consulta el consumo de hoy y si hay algo en la agenda "
+            "(calendar.mi_agenda) o pendientes urgentes.
+
+"
+            "Armalo en CUATRO A SEIS frases habladas, sin listas: primero las "
+            "fallas si las hay, despues lo silenciado o incidentes (resumido, no "
+            "uno por uno), despues consumo y agenda. Si esta todo bien, decilo "
+            "en una frase y no rellenes. Empeza con 'Buen dia' o parecido."
+        )
+        frase = await self.agente.encargo(pedido)
+        self.anotar("parte", [], frase)
+        if frase:
+            await self.voz.decir(frase, proactivo=True)
 
     def anotar(self, tipo: str, entidades: list[str], texto: str) -> None:
         self.bitacora.append(
@@ -296,6 +401,7 @@ de los botones, los emisores y los motores de voz, no una caida.</p>
         await asyncio.gather(
             self.hogar.conectar(),
             self.soltar_candados(),
+            self.parte_diario(),
             self.voz.correr(),
             self.rondas(),
             self.servidor(),
