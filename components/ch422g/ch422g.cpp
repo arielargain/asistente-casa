@@ -87,7 +87,7 @@ bool CH422GComponent::read_inputs_() {
 
 bool CH422GComponent::write_output_(uint8_t value) {
   const uint8_t temp = 1;
-  if ((this->last_error_ = this->write(&temp, 1, false)) != esphome::i2c::ERROR_OK) {
+  if ((this->last_error_ = this->bus_->write(this->address_, &temp, 1, false)) != esphome::i2c::ERROR_OK) {
     this->status_set_warning(str_sprintf("write_output_(): I2C I/O error: %d", (int) this->last_error_).c_str());
     return false;
   }
@@ -107,10 +107,6 @@ bool CH422GComponent::write_output_(uint8_t value) {
 
 float CH422GComponent::get_setup_priority() const { return setup_priority::IO; }
 
-// Run our loop() method very early in the loop, so that we cache read values
-// before other components call our digital_read() method.
-  // Just after WIFI
-
 void CH422GGPIOPin::setup() { pin_mode(flags_); }
 void CH422GGPIOPin::pin_mode(gpio::Flags flags) { this->parent_->pin_mode(this->pin_, flags); }
 bool CH422GGPIOPin::digital_read() { return this->parent_->digital_read(this->pin_) != this->inverted_; }
@@ -118,5 +114,7 @@ bool CH422GGPIOPin::digital_read() { return this->parent_->digital_read(this->pi
 void CH422GGPIOPin::digital_write(bool value) { this->parent_->digital_write(this->pin_, value != this->inverted_); }
 size_t CH422GGPIOPin::dump_summary(char *buffer, size_t len) const {
   return snprintf(buffer, len, "EXIO%u via CH422G", pin_);
+}
+
 }  // namespace ch422g
 }  // namespace esphome
