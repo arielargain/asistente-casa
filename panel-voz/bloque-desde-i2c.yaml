@@ -139,12 +139,6 @@ script:
       - delay: 100ms
       - component.update: pantalla
 
-text_sensor:
-  - platform: template
-    name: "Diagnostico expansor"
-    id: diag_expansor
-    update_interval: never
-
   - id: mostrar
     parameters:
       arriba: string
@@ -154,6 +148,13 @@ text_sensor:
           id(mensaje) = arriba;
           id(detalle) = abajo;
       - component.update: pantalla
+
+text_sensor:
+  # Aca publica el script despertar_expansor si el chip acepta o rechaza.
+  - platform: template
+    name: "Diagnostico expansor"
+    id: diag_expansor
+    update_interval: never
 
 # --------------------------------------------------------------- pantalla
 
