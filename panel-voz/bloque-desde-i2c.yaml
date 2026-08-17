@@ -316,6 +316,14 @@ voice_assistant:
   on_tts_end:
     # El microfono queda cerrado mientras suena la respuesta.
     - micro_wake_word.stop:
+    # DESPERTAR EL PARLANTE PRIMERO. Probado: play_media a un Google apagado
+    # no lo despierta y el audio muere en silencio, sin error. tts.speak si lo
+    # despierta, pero aca tenemos una URL, no texto. turn_on + espera resuelve.
+    - homeassistant.action:
+        action: media_player.turn_on
+        data:
+          entity_id: media_player.dormitorio
+    - delay: 1200ms
     - homeassistant.action:
         action: media_player.play_media
         data:
