@@ -58,6 +58,17 @@ class Hogar:
             except json.JSONDecodeError:
                 return cuerpo
 
+    async def config_ha(self, camino: str, metodo: str = "GET", datos: dict | None = None):
+        """Habla con la API de configuracion de HA (scripts, automatizaciones)."""
+        url = f"{BASE_REST}/config/{camino}"
+        async with self._sesion.request(
+            metodo, url, headers=self._cabeceras, json=datos
+        ) as r:
+            cuerpo = await r.text()
+            if r.status >= 400:
+                raise RuntimeError(f"{metodo} {camino} fallo ({r.status})")
+            return json.loads(cuerpo) if cuerpo.strip() else {}
+
     async def registro(self) -> str:
         """Devuelve el log de errores de HA (util para diagnosticar)."""
         async with self._sesion.get(f"{BASE_REST}/error_log", headers=self._cabeceras) as r:

@@ -137,6 +137,45 @@ class Asistente:
         )
         asyncio.create_task(self._trabajar(texto))
 
+    # ------------------------------------------- destrabar lo que pide Ariel
+
+    async def soltar_candados(self) -> None:
+        """Le saca el candado horario a los scripts que Ariel dispara el mismo.
+
+        El silencio de 00 a 11 es para lo que suena SOLO. Si Ariel pide un
+        reporte a las tres de la maniana, tiene que sonar: lo pidio el. Las
+        automatizaciones, que si se disparan solas, conservan el candado.
+        """
+        assert self.hogar
+        await asyncio.sleep(15)
+        try:
+            estados = self.hogar.todos()
+            scripts = [e for e in estados if e.startswith("script.")]
+            sueltos = 0
+            for ent in scripts:
+                nombre = ent.split(".", 1)[1]
+                try:
+                    cfg = await self.hogar.config_ha(f"script/config/{nombre}")
+                except Exception:  # noqa: BLE001
+                    continue
+                sec = cfg.get("sequence") or []
+                if not sec:
+                    continue
+                primero = sec[0] if isinstance(sec[0], dict) else {}
+                if (
+                    primero.get("condition") == "time"
+                    and primero.get("after") == "11:00:00"
+                    and primero.get("before") == "00:00:00"
+                ):
+                    cfg["sequence"] = sec[1:]
+                    await self.hogar.config_ha(f"script/config/{nombre}", "POST", cfg)
+                    sueltos += 1
+            if sueltos:
+                log.info("candado horario sacado de %s scripts que dispara Ariel", sueltos)
+                await self.hogar.llamar_servicio("script", "reload", {})
+        except Exception:  # noqa: BLE001
+            log.exception("no pude soltar los candados")
+
     def anotar(self, tipo: str, entidades: list[str], texto: str) -> None:
         self.bitacora.append(
             {"cuando": time.time(), "tipo": tipo, "entidades": entidades, "texto": texto}
@@ -179,7 +218,8 @@ class Asistente:
             frase = f"No pude terminar el encargo. {e}"
         self.anotar("encargo", [], frase)
         if frase:
-            await self.voz.decir(frase)
+            # Lo pidio Ariel: suena aunque sea de madrugada.
+            await self.voz.decir(frase, proactivo=False)
 
     async def h_autorizar(self, _pedido: web.Request) -> web.Response:
         self.autorizar()
@@ -255,6 +295,7 @@ de los botones, los emisores y los motores de voz, no una caida.</p>
 
         await asyncio.gather(
             self.hogar.conectar(),
+            self.soltar_candados(),
             self.voz.correr(),
             self.rondas(),
             self.servidor(),

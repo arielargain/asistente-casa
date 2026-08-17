@@ -34,31 +34,34 @@ class Voz:
     def __init__(self, hogar: Hogar, opciones: dict) -> None:
         self.hogar = hogar
         self.o = opciones
-        self._cola: asyncio.Queue[str] = asyncio.Queue()
+        self._cola: asyncio.Queue[tuple[str, bool]] = asyncio.Queue()
         self._dicho: list[tuple[float, str]] = []
         # Lo que no se pudo decir por el horario. Queda para contarlo despues.
         self.callado: list[tuple[float, str]] = []
 
-    async def decir(self, texto: str) -> None:
+    async def decir(self, texto: str, *, proactivo: bool = True) -> None:
+        """proactivo=True es algo que el asistente dice por su cuenta: eso
+        calla de 00 a 11. proactivo=False es la respuesta a algo que pidio
+        Ariel, y eso suena siempre: si el lo pidio, quiere escucharlo."""
         texto = " ".join(texto.split())
         if not texto:
             return
-        if es_horario_de_silencio():
+        if proactivo and es_horario_de_silencio():
             self.callado.append((time.time(), texto))
             del self.callado[:-100]
             log.info("horario de silencio: NO se dice, queda guardado -> %s", texto[:90])
             return
-        await self._cola.put(texto)
+        await self._cola.put((texto, proactivo))
 
     def historial(self, cuantos: int = 30) -> list[tuple[float, str]]:
         return self._dicho[-cuantos:]
 
     async def correr(self) -> None:
         while True:
-            texto = await self._cola.get()
-            # Segunda barrera. Un aviso puede haber entrado a la cola a las
-            # 23:59 y salir a las 00:01: aca se lo frena igual.
-            if es_horario_de_silencio():
+            texto, proactivo = await self._cola.get()
+            # Segunda barrera, solo para lo proactivo: un aviso puede entrar a
+            # la cola a las 23:59 y salir a las 00:01.
+            if proactivo and es_horario_de_silencio():
                 self.callado.append((time.time(), texto))
                 del self.callado[:-100]
                 log.info("horario de silencio en la cola: NO se dice -> %s", texto[:90])
