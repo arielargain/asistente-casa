@@ -1,55 +1,29 @@
 # ---------------------------------------------------------------------------
 # Panel de voz — todo lo que va DESPUES de captive_portal.
-# Reemplaza desde la linea "i2c:" hasta el final del archivo.
-# NO toques nada de lo que esta arriba de i2c: ahi viven la clave de cifrado,
-# la contrasenia de OTA y el wifi.
+# Reemplaza desde la linea "external_components:" (o "i2c:") hasta el final.
+# NO tocar lo de arriba: clave de cifrado, OTA y wifi.
 #
-# v10: se le habla al expansor por I2C DIRECTO y el parlante va en el SEGUNDO
-# periferico I2S.
+# v11: LA PANTALLA, con la receta que funciona en esta placa exacta
+# (github.com/lboue/ESPHome_Waveshare_ESP32-S3_Touch_4.3):
 #
-# EL DATO QUE DESTRABA TODO, de la libreria oficial de Waveshare, en un ejemplo
-# escrito para esta placa exacta (ESP32-S3-Touch-LCD-4.3B-BOX):
+#   1. El ch422g OFICIAL de ESPHome esta roto para esta placa. Se usa la
+#      version del PR #7356 (la original, con address configurable), que es
+#      la que la comunidad tiene funcionando.
+#   2. Tiempos de video correctos: pclk 14MHz y porches 10/20/10 — los
+#      anteriores (16MHz, 16/16/8) eran de la placa hermana 4.3B.
+#   3. Se elimina el hack de I2C directo del on_boot: con el componente bueno
+#      no hace falta y podria pisarse con el.
 #
-#   "The input/output mode of CH422G's IO0-7 must remain consistent...
-#    Using pinMode and multiPinMode will be invalid. You can only set the pin
-#    working mode through enableAllIO_Input, enableAllIO_Output..."
-#
-# Los ocho pines son TODOS entrada o TODOS salida, y fijar el modo pin por pin
-# —que es justo lo que hace ESPHome— NO TIENE EFECTO. Por eso ninguna escritura
-# movia nada, y por eso la sonda de entrada fue catastrofica: declaraba un pin
-# como entrada en un banco que tenia que ser todo salida.
-#
-# La solucion es saltear el componente y escribirle al chip como hace el
-# firmware de fabrica. I2CBus::write() es publico en ESPHome.
-#
-# LO QUE SE APRENDIO INVESTIGANDO (y corrige varios supuestos anteriores):
-#
-# 1. El CH422G arranca en modo entrada. Su modo se escribe UNA sola vez, en
-#    el setup del expansor, que corre ANTES que los pines que lo usan: cuando
-#    se escribe, todavia nadie declaro salidas. Las escrituras posteriores no
-#    fallan pero no mueven nada.
-#    El rodeo de otras placas (volver a llamar pin->setup()) NO sirve aca:
-#    CH422GGPIOPin::setup() esta vacio en el codigo de ESPHome.
-#    Lo que SI funciona: read_inputs_() reescribe el modo, y digital_read()
-#    es publico. Una sola lectura en el arranque tardio empuja el modo salida.
-#    OJO: tiene que ser UNA sola vez. Leer en bucle pone los ocho pines en
-#    entrada en cada lectura, y eso dejaba la pantalla apagada.
-#
-# 2. EXIO2 maneja la luz Y la senial DISP a la vez, asi que alcanza para
-#    prender la pantalla. El PWM de brillo (EXIO_PWM) solo sirve para regular
-#    y encima pide modificar el hardware: no se usa.
-#
-# 3. EXIO3 NO es el reset del LCD en la 4.3C — eso venia de la 4.3B. Se saca.
-#
-# 4. EXIO4 es SD_CS y PA_CTRL a la vez. Como no se usa la tarjeta SD, queda
-#    libre para el amplificador.
-#
-# 5. CORREGIDO: el microfono y el parlante NO pueden compartir el bus I2S en
-#    esta version de ESPHome. Se probo quitando el enlace del codec dentro del
-#    bloque speaker (como hace la config de referencia) y el error volvio
-#    igual. Por eso la bocina de la placa queda afuera hasta que ESPHome
-#    soporte duplex, o hasta usar el segundo periferico I2S del S3.
+# El microfono y toda la voz quedan EXACTAMENTE como estaban (funcionando).
+# El parlante de la placa sigue afuera (limite del nucleo ESPHome, no de aca).
 # ---------------------------------------------------------------------------
+
+external_components:
+  # CH422G del PR original: el refactor que entro al nucleo no escribe bien
+  # los registros de esta placa. Este si.
+  - source: github://pr#7356
+    components: [ch422g]
+    refresh: 1d
 
 i2c:
   - id: bus_a
@@ -60,6 +34,8 @@ i2c:
 
 ch422g:
   - id: expansor
+    i2c_id: bus_a
+    address: 0x24
 
 # --------------------------------------------------------------- audio
 
@@ -92,7 +68,76 @@ microphone:
     bits_per_sample: 16bit
     sample_rate: 16000
 
-# --------------------------------------------------------------- expansor
+# --------------------------------------------------------------- pantalla
+
+display:
+  - platform: rpi_dpi_rgb
+    id: pantalla
+    update_interval: never
+    auto_clear_enabled: false
+    color_order: RGB
+    # Tiempos de la receta que funciona (lboue): 14MHz y porches 10/20/10.
+    pclk_frequency: 14MHz
+    pclk_inverted: false
+    dimensions:
+      width: 800
+      height: 480
+    de_pin:
+      number: 5
+    reset_pin:
+      ch422g: expansor
+      number: 3
+    enable_pin:
+      ch422g: expansor
+      number: 2
+    hsync_pin:
+      number: 46
+      ignore_strapping_warning: true
+    vsync_pin:
+      number: 3
+      ignore_strapping_warning: true
+    pclk_pin: 7
+    hsync_back_porch: 10
+    hsync_front_porch: 20
+    hsync_pulse_width: 10
+    vsync_back_porch: 10
+    vsync_front_porch: 10
+    vsync_pulse_width: 10
+    data_pins:
+      red: [1, 2, 42, 41, 40]
+      blue: [14, 38, 18, 17, 10]
+      green: [39, 0, 45, 48, 47, 21]
+    lambda: |-
+      it.fill(Color(12, 14, 20));
+      it.printf(400, 190, id(letra_grande), Color(235, 238, 245),
+                TextAlign::CENTER, "%s", id(mensaje).c_str());
+      it.printf(400, 300, id(letra_chica), Color(120, 130, 150),
+                TextAlign::CENTER, "%s", id(detalle).c_str());
+
+touchscreen:
+  - platform: gt911
+    id: tactil
+    display: pantalla
+    update_interval: 16ms
+    interrupt_pin: GPIO4
+    reset_pin:
+      ch422g: expansor
+      number: 1
+    on_touch:
+      - if:
+          condition:
+            lambda: 'return !id(va).is_running();'
+          then:
+            - lambda: 'id(seguidas) = 0;'
+            - voice_assistant.start:
+
+font:
+  - file: "gfonts://Roboto"
+    id: letra_grande
+    size: 64
+  - file: "gfonts://Roboto"
+    id: letra_chica
+    size: 28
 
 switch:
   # Apagado: funciona por palabra de activacion, como una bocina comun.
@@ -113,32 +158,6 @@ switch:
           id(seguidas) = 0;
 
 script:
-  # ESTA ES LA PIEZA CLAVE. Se le escribe al CH422G por I2C directo, igual que
-  # el firmware de fabrica. En este chip cada "registro" es una direccion I2C
-  # distinta, por eso van dos escrituras a direcciones diferentes.
-  # Le escribe al CH422G por I2C directo Y PUBLICA EL RESULTADO en Home
-  # Assistant. Sin esto habia que cazar los mensajes en la ventana de registro
-  # justo en el arranque, que es imposible de sincronizar.
-  - id: despertar_expansor
-    then:
-      - lambda: |-
-          char buf[160];
-          uint8_t modo = 0x01;                                   // banco a salida
-          auto e1 = id(bus_a)->write(0x24, &modo, 1);
-          delay(5);
-          uint8_t salidas = (1 << 1) | (1 << 2) | (1 << 4);      // 0x16
-          auto e2 = id(bus_a)->write(0x38, &salidas, 1);
-          delay(5);
-          uint8_t leido = 0xFF;                                  // leer de vuelta
-          auto e3 = id(bus_a)->read(0x26, &leido, 1);
-          snprintf(buf, sizeof(buf),
-                   "modo=%d salidas=%d lectura=%d valor=0x%02X %s",
-                   (int) e1, (int) e2, (int) e3, leido,
-                   (e1 == 0 && e2 == 0) ? "-> ACEPTA" : "-> RECHAZA");
-          id(diag_expansor).publish_state(buf);
-      - delay: 100ms
-      - component.update: pantalla
-
   - id: mostrar
     parameters:
       arriba: string
@@ -148,79 +167,6 @@ script:
           id(mensaje) = arriba;
           id(detalle) = abajo;
       - component.update: pantalla
-
-text_sensor:
-  # Aca publica el script despertar_expansor si el chip acepta o rechaza.
-  - platform: template
-    name: "Diagnostico expansor"
-    id: diag_expansor
-    update_interval: never
-
-# --------------------------------------------------------------- pantalla
-
-display:
-  - platform: rpi_dpi_rgb
-    id: pantalla
-    update_interval: never
-    auto_clear_enabled: false
-    color_order: RGB
-    pclk_frequency: 16MHZ
-    dimensions:
-      width: 800
-      height: 480
-    de_pin:
-      number: 5
-    hsync_pin:
-      number: 46
-      ignore_strapping_warning: true
-    vsync_pin:
-      number: 3
-      ignore_strapping_warning: true
-    pclk_pin: 7
-    # Sin reset_pin ni enable_pin: EXIO3 no es el reset en esta variante, y
-    # de EXIO2 se encarga el interruptor de arriba, despues de despertar el
-    # expansor. Un solo duenio por pin.
-    hsync_back_porch: 16
-    hsync_front_porch: 16
-    hsync_pulse_width: 8
-    vsync_back_porch: 16
-    vsync_front_porch: 16
-    vsync_pulse_width: 8
-    data_pins:
-      red: [1, 2, 42, 41, 40]
-      blue: [14, 38, 18, 17, 10]
-      green: [39, 0, 45, 48, 47, 21]
-    lambda: |-
-      it.fill(Color(12, 14, 20));
-      it.printf(400, 190, id(letra_grande), Color(235, 238, 245),
-                TextAlign::CENTER, "%s", id(mensaje).c_str());
-      it.printf(400, 300, id(letra_chica), Color(120, 130, 150),
-                TextAlign::CENTER, "%s", id(detalle).c_str());
-
-touchscreen:
-  - platform: gt911
-    id: tactil
-    i2c_id: bus_a
-    display: pantalla
-    address: 0x14
-    update_interval: 20ms
-    interrupt_pin: GPIO4
-    # Sin reset_pin: lo suelta el script despertar_expansor por I2C directo.
-    on_touch:
-      - if:
-          condition:
-            lambda: 'return !id(va).is_running();'
-          then:
-            - lambda: 'id(seguidas) = 0;'
-            - voice_assistant.start:
-
-font:
-  - file: "gfonts://Roboto"
-    id: letra_grande
-    size: 64
-  - file: "gfonts://Roboto"
-    id: letra_chica
-    size: 28
 
 # --------------------------------------------------------------- estado
 
