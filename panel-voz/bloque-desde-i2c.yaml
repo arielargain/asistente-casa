@@ -338,8 +338,9 @@ voice_assistant:
         abajo: "proba de nuevo"
 
   on_end:
-    # Tiempo para que el parlante del dormitorio termine de hablar.
-    - delay: 7s
+    # Bajado de 7s a 4s: la deteccion de fin de habla esta en aggressive y la
+    # respuesta ya no se cuelga esperando reproducciones fantasma.
+    - delay: 4s
     - if:
         condition:
           lambda: 'return id(conversar) && id(hubo_voz) && id(seguidas) < 2;'
