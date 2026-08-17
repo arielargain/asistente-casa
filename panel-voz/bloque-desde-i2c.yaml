@@ -294,7 +294,7 @@ voice_assistant:
     - homeassistant.action:
         action: tts.speak
         data:
-          entity_id: tts.piper
+          entity_id: tts.home_assistant_cloud
           media_player_entity_id: media_player.dormitorio
           message: "Te escucho"
           cache: "true"
@@ -308,7 +308,7 @@ voice_assistant:
     - homeassistant.action:
         action: tts.speak
         data:
-          entity_id: tts.piper
+          entity_id: tts.home_assistant_cloud
           media_player_entity_id: media_player.dormitorio
           message: "Entendido"
           cache: "true"
