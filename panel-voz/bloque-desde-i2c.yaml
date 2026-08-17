@@ -255,13 +255,13 @@ micro_wake_word:
     channels: 0
     gain_factor: 1
   models:
-    # Dos palabras, cualquiera sirve. "Hey Jarvis" va primero porque asi se
-    # llama la canalizacion de Ariel y es la que le sale natural.
-    # El corte estaba en 0.97, que es muy exigente: hay que pronunciar casi
-    # perfecto. 0.90 engancha mejor sin abrir la puerta a cualquier ruido.
+    # SOLO "Hey Jarvis". La tablet tambien escucha manos libres y usa
+    # "Okay Nabu": si las dos escucharan la misma palabra se activarian juntas
+    # y se pisarian. Una palabra por aparato.
+    #   placa   -> Hey Jarvis
+    #   tablet  -> Okay Nabu
+    # El corte estaba en 0.97, que exige pronunciacion casi perfecta.
     - model: hey_jarvis
-      probability_cutoff: 0.90
-    - model: okay_nabu
       probability_cutoff: 0.90
   vad:
   on_wake_word_detected:
