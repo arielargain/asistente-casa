@@ -326,10 +326,3 @@ button:
       - delay: 300ms
       - voice_assistant.start:
 
-  # Por si hace falta re-despertar el expansor sin reiniciar la placa.
-  - platform: template
-    name: "Despertar expansor"
-    id: btn_expansor
-    icon: mdi:chip
-    on_press:
-      - script.execute: despertar_expansor
