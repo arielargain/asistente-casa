@@ -4,20 +4,34 @@
 # NO toques nada de lo que esta arriba de i2c: ahi viven la clave de cifrado,
 # la contrasenia de OTA y el wifi.
 #
-# v5: el asistente vuelve a hablar por el parlante del dormitorio, y se deja
-# UNA prueba en vivo para saber si el expansor CH422G realmente escribe.
+# v8: los tres frentes juntos, con fundamento.
 #
-# EL PROBLEMA QUE SE INTENTA RESOLVER:
-# El microfono (ES7210) y el parlante (ES8311) comparten el mismo bus I2S.
-# micro_wake_word escucha sin parar y nunca lo suelta, asi que la bocina daba
-#     [E][i2s_audio.speaker.std]: Parent bus is busy
-# una vez por segundo, para siempre.
+# LO QUE SE APRENDIO INVESTIGANDO (y corrige varios supuestos anteriores):
 #
-# LO QUE SE PRUEBA AHORA:
-#   1. on_tts_start cierra micro_wake_word ANTES de reproducir, para que
-#      suelte el bus, y on_end lo vuelve a abrir.
-#   2. Se saca rtttl: sospecho que era el que hacia arrancar la bocina apenas
-#      prendia la placa, antes de que nadie pidiera reproducir nada.
+# 1. El CH422G arranca en modo entrada. Su modo se escribe UNA sola vez, en
+#    el setup del expansor, que corre ANTES que los pines que lo usan: cuando
+#    se escribe, todavia nadie declaro salidas. Las escrituras posteriores no
+#    fallan pero no mueven nada.
+#    El rodeo de otras placas (volver a llamar pin->setup()) NO sirve aca:
+#    CH422GGPIOPin::setup() esta vacio en el codigo de ESPHome.
+#    Lo que SI funciona: read_inputs_() reescribe el modo, y digital_read()
+#    es publico. Una sola lectura en el arranque tardio empuja el modo salida.
+#    OJO: tiene que ser UNA sola vez. Leer en bucle pone los ocho pines en
+#    entrada en cada lectura, y eso dejaba la pantalla apagada.
+#
+# 2. EXIO2 maneja la luz Y la senial DISP a la vez, asi que alcanza para
+#    prender la pantalla. El PWM de brillo (EXIO_PWM) solo sirve para regular
+#    y encima pide modificar el hardware: no se usa.
+#
+# 3. EXIO3 NO es el reset del LCD en la 4.3C — eso venia de la 4.3B. Se saca.
+#
+# 4. EXIO4 es SD_CS y PA_CTRL a la vez. Como no se usa la tarjeta SD, queda
+#    libre para el amplificador.
+#
+# 5. El microfono y el parlante SI pueden compartir un bus I2S. El error era
+#    enlazar el codec dentro del bloque speaker: la configuracion de
+#    referencia que funciona no lo hace, y ese enlace hacia arrancar la
+#    salida apenas prendia la placa, chocando con el microfono.
 # ---------------------------------------------------------------------------
 
 i2c:
@@ -27,9 +41,6 @@ i2c:
     scan: true
     frequency: 400kHz
 
-# El expansor de I/O. La pantalla se comio casi todos los pines del micro, asi
-# que el reset del tactil, el reset del panel y la luz de la pantalla cuelgan
-# todos de este chip.
 ch422g:
   - id: expansor
 
@@ -43,6 +54,15 @@ audio_adc:
     bits_per_sample: 16bit
     mic_gain: 18dB
     sample_rate: 16000
+
+audio_dac:
+  - platform: es8311
+    id: dac_parlante
+    i2c_id: bus_a
+    address: 0x18
+    bits_per_sample: 16bit
+    sample_rate: 16000
+    use_mclk: true
 
 i2s_audio:
   - id: i2s_bus
@@ -64,14 +84,21 @@ microphone:
     bits_per_sample: 16bit
     sample_rate: 16000
 
-# --------------------------------------------------------------- pantalla
+speaker:
+  - platform: i2s_audio
+    id: parlante
+    i2s_audio_id: i2s_bus
+    i2s_dout_pin: GPIO15
+    # SIN "audio_dac:" a proposito. La configuracion de referencia que
+    # funciona no lo enlaza, y con el enlace la salida arrancaba sola al
+    # prender la placa y chocaba con el microfono en el bus compartido.
+    dac_type: external
+    channel: mono
+
+# --------------------------------------------------------------- expansor
 
 switch:
-  # PRUEBA EN VIVO. Aparece en Home Assistant como "Luz de pantalla".
-  # Si al tocarlo la pantalla se ilumina o se apaga, el expansor escribe bien
-  # y el problema es la secuencia de arranque del panel. Si no pasa nada, las
-  # escrituras al expansor no llegan y hay que atacar eso.
-  # Por eso se le saco enable_pin al display: un solo duenio para EXIO2.
+  # Luz de la pantalla. EXIO2 maneja la luz y el DISP juntos.
   - platform: gpio
     name: "Luz de pantalla"
     id: luz_pantalla
@@ -80,6 +107,18 @@ switch:
     pin:
       ch422g: expansor
       number: 2
+      mode:
+        output: true
+
+  # Amplificador del parlante de la placa (PA_CTRL, comparte pin con SD_CS).
+  - platform: gpio
+    name: "Amplificador"
+    id: amplificador
+    icon: mdi:volume-high
+    restore_mode: ALWAYS_ON
+    pin:
+      ch422g: expansor
+      number: 4
       mode:
         output: true
 
@@ -100,22 +139,29 @@ switch:
           id(conversar) = false;
           id(seguidas) = 0;
 
-# LA PIEZA QUE DESTRABA EL EXPANSOR.
-# El CH422G arranca en modo entrada y su modo se fija una sola vez, en el
-# setup del expansor — que corre ANTES que los pines que lo usan. Resultado:
-# cuando se fija el modo todavia nadie declaro pines de salida, el chip queda
-# en entrada, y las escrituras no dan error pero no mueven nada.
-# read_inputs_() reescribe el modo en cada lectura. Con esta sonda leyendose
-# sola, el chip queda en modo salida de forma permanente.
-binary_sensor:
-  - platform: gpio
-    id: sonda_expansor
-    internal: true
-    pin:
-      ch422g: expansor
-      number: 5
-      mode:
-        input: true
+script:
+  # ESTA ES LA PIEZA CLAVE DE TODO. Una sola lectura del expansor empuja el
+  # modo salida al chip; recien despues tiene sentido escribir los pines.
+  - id: despertar_expansor
+    then:
+      - lambda: 'id(expansor)->digital_read(0);'
+      - delay: 50ms
+      - switch.turn_on: luz_pantalla
+      - switch.turn_on: amplificador
+      - delay: 100ms
+      - component.update: pantalla
+
+  - id: mostrar
+    parameters:
+      arriba: string
+      abajo: string
+    then:
+      - lambda: |-
+          id(mensaje) = arriba;
+          id(detalle) = abajo;
+      - component.update: pantalla
+
+# --------------------------------------------------------------- pantalla
 
 display:
   - platform: rpi_dpi_rgb
@@ -136,11 +182,9 @@ display:
       number: 3
       ignore_strapping_warning: true
     pclk_pin: 7
-    reset_pin:
-      ch422g: expansor
-      number: 3
-      mode:
-        output: true
+    # Sin reset_pin ni enable_pin: EXIO3 no es el reset en esta variante, y
+    # de EXIO2 se encarga el interruptor de arriba, despues de despertar el
+    # expansor. Un solo duenio por pin.
     hsync_back_porch: 16
     hsync_front_porch: 16
     hsync_pulse_width: 8
@@ -163,6 +207,8 @@ touchscreen:
     id: tactil
     i2c_id: bus_a
     display: pantalla
+    address: 0x14
+    update_interval: 20ms
     interrupt_pin: GPIO4
     reset_pin:
       ch422g: expansor
@@ -211,17 +257,6 @@ globals:
     restore_value: no
     initial_value: '"decime eso para hablarme"'
 
-script:
-  - id: mostrar
-    parameters:
-      arriba: string
-      abajo: string
-    then:
-      - lambda: |-
-          id(mensaje) = arriba;
-          id(detalle) = abajo;
-      - component.update: pantalla
-
 micro_wake_word:
   id: mww
   microphone:
@@ -238,16 +273,18 @@ micro_wake_word:
 voice_assistant:
   id: va
   microphone: mic
+  # La respuesta sale por la bocina de la placa. Si esto falla, Ariel igual se
+  # entera de que lo escucho: los avisos de abajo van por el parlante del
+  # dormitorio, que es el camino verificado.
+  speaker: parlante
   noise_suppression_level: 2
   auto_gain: 9dBFS
   volume_multiplier: 1.0
 
   on_client_connected:
     - micro_wake_word.start:
-    # Se vuelve a mandar la luz y se redibuja: esto corre mucho despues del
-    # arranque, cuando la sonda ya dejo al expansor en modo salida.
-    - switch.turn_on: luz_pantalla
-    - delay: 500ms
+    - script.execute: despertar_expansor
+    - delay: 300ms
     - script.execute:
         id: mostrar
         arriba: "Okay Nabu"
@@ -260,9 +297,6 @@ voice_assistant:
         id: mostrar
         arriba: "Te escucho"
         abajo: "hablame"
-    # Palabra en vez de pitido: el pitido no se escuchaba nunca. El parlante
-    # del dormitorio NO soporta announce (lo confirma supported_features), y
-    # un clip corto se pierde mientras el Google levanta el stream.
     - homeassistant.action:
         action: tts.speak
         data:
@@ -294,27 +328,8 @@ voice_assistant:
         arriba: "No te entendi"
         abajo: "proba de nuevo"
 
-  on_tts_end:
-    # El microfono queda cerrado mientras suena la respuesta: sale por el
-    # parlante del dormitorio y si no, se escucha a si misma y arranca de nuevo.
-    - micro_wake_word.stop:
-    - homeassistant.action:
-        action: media_player.play_media
-        data:
-          entity_id: media_player.dormitorio
-          media_content_type: music
-          # SIN announce a proposito. En un Google, announce esta pensado para
-          # avisos cortos: con una respuesta larga descarta el audio y no suena
-          # nada, aunque el texto haya llegado bien. Al parlante ya lo desperto
-          # el pitido de on_stt_end, que suena unos segundos antes.
-        data_template:
-          media_content_id: "{{ url }}"
-        variables:
-          url: !lambda 'return x;'
-
   on_end:
-    # Se le da tiempo al parlante a terminar antes de volver a escuchar.
-    - delay: 7s
+    - delay: 1s
     - if:
         condition:
           lambda: 'return id(conversar) && id(hubo_voz) && id(seguidas) < 2;'
@@ -347,3 +362,11 @@ button:
       - lambda: 'id(seguidas) = 0;'
       - delay: 300ms
       - voice_assistant.start:
+
+  # Por si hace falta re-despertar el expansor sin reiniciar la placa.
+  - platform: template
+    name: "Despertar expansor"
+    id: btn_expansor
+    icon: mdi:chip
+    on_press:
+      - script.execute: despertar_expansor
