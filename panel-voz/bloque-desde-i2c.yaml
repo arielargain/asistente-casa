@@ -221,7 +221,6 @@ voice_assistant:
 
   on_client_connected:
     - micro_wake_word.start:
-    - script.execute: despertar_expansor
     - delay: 300ms
     - script.execute:
         id: mostrar
