@@ -308,7 +308,7 @@ voice_assistant:
         data:
           entity_id: tts.home_assistant_cloud
           media_player_entity_id: media_player.dormitorio
-          message: "Entendido"
+          message: "Okey"
           cache: "true"
 
   on_tts_end:
