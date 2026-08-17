@@ -4,7 +4,11 @@
 # NO toques nada de lo que esta arriba de i2c: ahi viven la clave de cifrado,
 # la contrasenia de OTA y el wifi.
 #
-# v8: los tres frentes juntos, con fundamento.
+# v9: SIN la bocina de la placa. Comprobado en el log: microfono y parlante
+# NO pueden compartir el bus I2S en esta version de ESPHome, sin importar como
+# se configure el codec. Da 'Parent bus is busy' una vez por segundo, para
+# siempre, y ese bucle es lo que colgo la placa una hora. Ver issue 16043.
+# La respuesta vuelve al parlante del dormitorio, que funciona.
 #
 # LO QUE SE APRENDIO INVESTIGANDO (y corrige varios supuestos anteriores):
 #
@@ -28,10 +32,11 @@
 # 4. EXIO4 es SD_CS y PA_CTRL a la vez. Como no se usa la tarjeta SD, queda
 #    libre para el amplificador.
 #
-# 5. El microfono y el parlante SI pueden compartir un bus I2S. El error era
-#    enlazar el codec dentro del bloque speaker: la configuracion de
-#    referencia que funciona no lo hace, y ese enlace hacia arrancar la
-#    salida apenas prendia la placa, chocando con el microfono.
+# 5. CORREGIDO: el microfono y el parlante NO pueden compartir el bus I2S en
+#    esta version de ESPHome. Se probo quitando el enlace del codec dentro del
+#    bloque speaker (como hace la config de referencia) y el error volvio
+#    igual. Por eso la bocina de la placa queda afuera hasta que ESPHome
+#    soporte duplex, o hasta usar el segundo periferico I2S del S3.
 # ---------------------------------------------------------------------------
 
 i2c:
@@ -55,15 +60,6 @@ audio_adc:
     mic_gain: 18dB
     sample_rate: 16000
 
-audio_dac:
-  - platform: es8311
-    id: dac_parlante
-    i2c_id: bus_a
-    address: 0x18
-    bits_per_sample: 16bit
-    sample_rate: 16000
-    use_mclk: true
-
 i2s_audio:
   - id: i2s_bus
     i2s_lrclk_pin: GPIO16
@@ -83,17 +79,6 @@ microphone:
     use_apll: true
     bits_per_sample: 16bit
     sample_rate: 16000
-
-speaker:
-  - platform: i2s_audio
-    id: parlante
-    i2s_audio_id: i2s_bus
-    i2s_dout_pin: GPIO15
-    # SIN "audio_dac:" a proposito. La configuracion de referencia que
-    # funciona no lo enlaza, y con el enlace la salida arrancaba sola al
-    # prender la placa y chocaba con el microfono en el bus compartido.
-    dac_type: external
-    channel: mono
 
 # --------------------------------------------------------------- expansor
 
@@ -273,10 +258,6 @@ micro_wake_word:
 voice_assistant:
   id: va
   microphone: mic
-  # La respuesta sale por la bocina de la placa. Si esto falla, Ariel igual se
-  # entera de que lo escucho: los avisos de abajo van por el parlante del
-  # dormitorio, que es el camino verificado.
-  speaker: parlante
   noise_suppression_level: 2
   auto_gain: 9dBFS
   volume_multiplier: 1.0
@@ -319,6 +300,21 @@ voice_assistant:
           message: "Dale"
           cache: "true"
 
+  on_tts_end:
+    # El microfono queda cerrado mientras suena la respuesta.
+    - micro_wake_word.stop:
+    - homeassistant.action:
+        action: media_player.play_media
+        data:
+          entity_id: media_player.dormitorio
+          media_content_type: music
+          # SIN announce: el parlante no lo soporta y con respuestas largas
+          # descarta el audio, dejando la placa colgada esperando.
+        data_template:
+          media_content_id: "{{ url }}"
+        variables:
+          url: !lambda 'return x;'
+
   on_error:
     - lambda: |-
         id(hubo_voz) = false;
@@ -329,7 +325,8 @@ voice_assistant:
         abajo: "proba de nuevo"
 
   on_end:
-    - delay: 1s
+    # Tiempo para que el parlante del dormitorio termine de hablar.
+    - delay: 7s
     - if:
         condition:
           lambda: 'return id(conversar) && id(hubo_voz) && id(seguidas) < 2;'
