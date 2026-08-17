@@ -19,9 +19,12 @@
 # ---------------------------------------------------------------------------
 
 external_components:
-  # CH422G del PR original: el refactor que entro al nucleo no escribe bien
-  # los registros de esta placa. Este si.
-  - source: github://pr#7356
+  # CH422G del PR original (jesterret), copiado a NUESTRO repo para no
+  # depender de descargas. La diferencia clave con el componente oficial:
+  # antes de cada escritura de salidas toca la direccion 0x24 sin cerrar la
+  # transaccion; sin ese saludo el chip rechaza (NACK) todo lo que va a 0x38.
+  # El refactor del nucleo perdio ese detalle y por eso la pantalla no andaba.
+  - source: github://arielargain/asistente-casa
     components: [ch422g]
     refresh: 1d
 
