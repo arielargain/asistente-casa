@@ -113,6 +113,30 @@ class Asistente:
                 log.exception("la ronda de vigilancia fallo")
             await asyncio.sleep(60)
 
+    # ------------------------------------------------------- encargos por voz
+
+    # Ariel le habla al asistente rapido, ese escribe el pedido en este
+    # ayudante de Home Assistant, y el agente de fondo lo levanta desde aca.
+    # Se hace asi y no por HTTP porque el complemento solo se alcanza por
+    # ingress, y montar una llamada REST pedia editar configuration.yaml.
+    BUZON = "input_text.encargo_al_agente"
+
+    async def al_cambiar_encargo(self, datos: dict) -> None:
+        if datos.get("entity_id") != self.BUZON:
+            return
+        nuevo = (datos.get("new_state") or {}).get("state", "")
+        texto = str(nuevo).strip()
+        if not texto or texto in ("unknown", "unavailable"):
+            return
+        log.info("encargo por voz: %s", texto[:120])
+        # Se vacia enseguida para que el proximo pedido igual al anterior
+        # tambien dispare un cambio de estado.
+        assert self.hogar
+        await self.hogar.llamar_servicio(
+            "input_text", "set_value", {"entity_id": self.BUZON, "value": ""}
+        )
+        asyncio.create_task(self._trabajar(texto))
+
     def anotar(self, tipo: str, entidades: list[str], texto: str) -> None:
         self.bitacora.append(
             {"cuando": time.time(), "tipo": tipo, "entidades": entidades, "texto": texto}
@@ -227,6 +251,7 @@ de los botones, los emisores y los motores de voz, no una caida.</p>
         self.vigilante = Vigilante(self.hogar, self.o)
         self.agente = Agente(self.hogar, self.o, self.permiso)
         self.hogar.al_cambiar(self.vigilante.al_cambiar)
+        self.hogar.al_cambiar(self.al_cambiar_encargo)
 
         await asyncio.gather(
             self.hogar.conectar(),
