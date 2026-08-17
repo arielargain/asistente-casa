@@ -255,13 +255,11 @@ micro_wake_word:
     channels: 0
     gain_factor: 1
   models:
-    # SOLO "Hey Jarvis". La tablet tambien escucha manos libres y usa
-    # "Okay Nabu": si las dos escucharan la misma palabra se activarian juntas
-    # y se pisarian. Una palabra por aparato.
-    #   placa   -> Hey Jarvis
-    #   tablet  -> Okay Nabu
-    # El corte estaba en 0.97, que exige pronunciacion casi perfecta.
-    - model: hey_jarvis
+    # "Okay Nabu": la unica palabra PROBADA con la pronunciacion de Ariel.
+    # hey_jarvis esta entrenado en ingles y con su acento no dispara nunca
+    # (18 minutos de intentos sin un solo evento). Para evitar que la tablet
+    # y la placa se pisen, el cambio de palabra va del lado de la tablet.
+    - model: okay_nabu
       probability_cutoff: 0.90
   vad:
   on_wake_word_detected:
