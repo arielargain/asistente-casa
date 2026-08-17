@@ -260,17 +260,11 @@ class Asistente:
         if incidentes:
             resumen = " | ".join(f"{b['tipo']}: {b['texto'][:100]}" for b in incidentes[-6:])
             partes.append(f"INCIDENTES DE LAS ULTIMAS 24H: {resumen}")
-        contexto = "
-".join(partes) if partes else "Sin fallas, sin avisos silenciados y sin incidentes."
+        contexto = " || ".join(partes) if partes else "Sin fallas, sin avisos silenciados y sin incidentes."
         pedido = (
-            "Es el parte diario de la casa para Ariel. Datos crudos:
-" + contexto +
-            "
-
-Ademas consulta el consumo de hoy y si hay algo en la agenda "
-            "(calendar.mi_agenda) o pendientes urgentes.
-
-"
+            "Es el parte diario de la casa para Ariel. Datos crudos: " + contexto +
+            " ||| Ademas consulta el consumo de hoy y si hay algo en la agenda "
+            "(calendar.mi_agenda) o pendientes urgentes. "
             "Armalo en CUATRO A SEIS frases habladas, sin listas: primero las "
             "fallas si las hay, despues lo silenciado o incidentes (resumido, no "
             "uno por uno), despues consumo y agenda. Si esta todo bien, decilo "

@@ -126,7 +126,7 @@ def herramientas_de_la_casa(hogar: Hogar, opciones: dict):
         r = await hogar.config_ha(f"config_entries/entry/{args['entry_id']}/reload", "POST")
         return {"content": [{"type": "text", "text": json.dumps(r, ensure_ascii=False, default=str)[:500]}]}
 
-        @tool("buscar_en_mis_notas", "Busca por significado en el segundo cerebro de Ariel: sus proyectos, decisiones y documentacion de la casa", {"consulta": str})
+    @tool("buscar_en_mis_notas", "Busca por significado en el segundo cerebro de Ariel: sus proyectos, decisiones y documentacion de la casa", {"consulta": str})
     async def buscar_en_mis_notas(args: dict[str, Any]) -> dict:
         texto = await buscar_en_el_cerebro(str(args["consulta"]))
         return {"content": [{"type": "text", "text": texto}]}
