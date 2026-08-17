@@ -26,7 +26,7 @@ external_components:
   # El refactor del nucleo perdio ese detalle y por eso la pantalla no andaba.
   - source: github://arielargain/asistente-casa
     components: [ch422g]
-    refresh: 1d
+    refresh: 0s
 
 i2c:
   - id: bus_a
