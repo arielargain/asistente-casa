@@ -28,6 +28,9 @@ log = logging.getLogger("asistente")
 
 OPCIONES = Path("/data/options.json")
 TRABAJO = Path("/share/asistente/trabajo")
+# Encargos que todavia no terminaron. Sobrevive a los reinicios del
+# complemento: al arrancar se retoman, en vez de morir en silencio.
+PENDIENTES = Path("/share/asistente/encargos_pendientes.json")
 
 # Herramientas que puede usar sin consultar. El resto se le niega y el agente
 # tiene que pedirselo a Ariel en voz alta antes de volver a intentarlo.
@@ -347,17 +350,67 @@ class Asistente:
         asyncio.create_task(self._trabajar(texto))
         return web.json_response({"respuesta": "Dale, me pongo con eso y te aviso."})
 
-    async def _trabajar(self, texto: str) -> None:
-        assert self.agente and self.voz
+    def _leer_pendientes(self) -> list[str]:
         try:
-            frase = await self.agente.encargo(texto)
+            lista = json.loads(PENDIENTES.read_text(encoding="utf-8"))
+            return [str(x) for x in lista] if isinstance(lista, list) else []
+        except Exception:  # noqa: BLE001
+            return []
+
+    def _guardar_pendientes(self, lista: list[str]) -> None:
+        try:
+            PENDIENTES.parent.mkdir(parents=True, exist_ok=True)
+            PENDIENTES.write_text(json.dumps(lista, ensure_ascii=False), encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            log.exception("no pude guardar los encargos pendientes")
+
+    async def _trabajar(self, texto: str, *, proactivo: bool = False) -> None:
+        """Un encargo SIEMPRE termina con una frase: la respuesta, el error o
+        el aviso de que no hubo nada. El silencio ya nos costo tres encargos."""
+        assert self.agente and self.voz
+        pend = self._leer_pendientes()
+        if texto not in pend:
+            self._guardar_pendientes(pend + [texto])
+        try:
+            frase = await asyncio.wait_for(self.agente.encargo(texto), timeout=15 * 60)
+        except asyncio.TimeoutError:
+            log.error("encargo cortado a los 15 minutos: %s", texto[:120])
+            frase = (
+                "El encargo se paso de los quince minutos y lo corte. "
+                "Pedimelo de nuevo, mas acotado."
+            )
         except Exception as e:  # noqa: BLE001
             log.exception("el encargo fallo")
             frase = f"No pude terminar el encargo. {e}"
+        if not frase.strip():
+            log.warning("el encargo termino sin texto: %s", texto[:120])
+            frase = (
+                "Termine el encargo pero no me quedo ninguna respuesta para "
+                "decirte. Si esperabas algo, pedimelo de nuevo."
+            )
+        self._guardar_pendientes([p for p in self._leer_pendientes() if p != texto])
         self.anotar("encargo", [], frase)
-        if frase:
-            # Lo pidio Ariel: suena aunque sea de madrugada.
-            await self.voz.decir(frase, proactivo=False)
+        # proactivo=False: lo pidio Ariel y suena aunque sea de madrugada.
+        # proactivo=True: es un encargo retomado tras un reinicio; si es de
+        # noche va callado al parte de las 11:30, la regla de silencio manda.
+        await self.voz.decir(frase, proactivo=proactivo)
+
+    async def reanudar_encargos(self) -> None:
+        """Al arrancar, retomar lo que un reinicio dejo a medias."""
+        await asyncio.sleep(20)
+        pend = self._leer_pendientes()
+        if not pend:
+            return
+        log.info("retomando %d encargo(s) que quedaron a medias", len(pend))
+        assert self.voz
+        aviso = (
+            f"Me reiniciaron con {len(pend)} encargo{'s' if len(pend) > 1 else ''} "
+            "a medias. Lo retomo ahora." if len(pend) == 1 else
+            f"Me reiniciaron con {len(pend)} encargos a medias. Los retomo ahora."
+        )
+        await self.voz.decir(aviso, proactivo=True)
+        for texto in pend:
+            await self._trabajar(texto, proactivo=True)
 
     async def h_autorizar(self, _pedido: web.Request) -> web.Response:
         self.autorizar()
@@ -435,6 +488,7 @@ de los botones, los emisores y los motores de voz, no una caida.</p>
             self.hogar.conectar(),
             self.soltar_candados(),
             self.parte_diario(),
+            self.reanudar_encargos(),
             self.voz.correr(),
             self.rondas(),
             self.servidor(),

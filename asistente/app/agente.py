@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import datetime
 from typing import Any
 
 from claude_agent_sdk import (
@@ -190,14 +191,18 @@ class Agente:
             model=self.o.get("modelo", "claude-sonnet-5"),
             system_prompt=PERSONALIDAD + extra,
             mcp_servers={"casa": self._servidor},
+            # OJO (aprendido el 17/8): lo que figura aca se AUTO-APRUEBA y
+            # esquiva el permiso() de main.py (CanUseToolShadowedWarning).
+            # Solo van las herramientas de mirar y las de escribir notas.
+            # Bash, ejecutar_en_la_casa, reiniciar_por_poe y compania quedan
+            # afuera a proposito: asi si pasan por el control de permisos.
             allowed_tools=[
-                "Read", "Glob", "Grep", "WebSearch", "WebFetch", "Edit", "Write", "Bash",
+                "Read", "Glob", "Grep", "WebSearch", "WebFetch", "Edit", "Write",
                 "mcp__casa__estado_de_la_casa",
                 "mcp__casa__que_esta_caido",
-                "mcp__casa__ejecutar_en_la_casa",
                 "mcp__casa__registro_de_home_assistant",
                 "mcp__casa__complementos",
-                "mcp__casa__reiniciar_complemento",
+                "mcp__casa__listar_integraciones",
                 "mcp__casa__buscar_en_mis_notas",
             ],
             can_use_tool=self._pedir_permiso,
@@ -216,7 +221,9 @@ class Agente:
 
     async def encargo(self, texto: str) -> str:
         """Ariel le pide algo. Puede tardar; el resultado se dice por el parlante."""
-        return await self._correr(texto)
+        # Sin esto el modelo inventa la hora cuando se la preguntan.
+        ahora = datetime.now().strftime("%d/%m/%Y %H:%M")
+        return await self._correr(f"(Ahora es {ahora}, hora local.) {texto}")
 
     async def analizar(self, incidente) -> str:
         """El vigilante detecto algo. Que decida si es real y que hacer."""
