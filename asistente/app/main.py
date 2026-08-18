@@ -21,6 +21,25 @@ from hogar import Hogar
 from vigilante import Vigilante
 from voz import Voz, es_horario_de_silencio
 
+# El SDK nuevo exige objetos PermissionResult en can_use_tool; el diccionario
+# de antes lo toma como invalido y BLOQUEA el tool con "error de permisos"
+# aunque el permiso diga que si (nos paso el 18/8). Con SDK viejo, caemos al
+# formato de diccionario.
+try:
+    from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
+
+    def PERMITIR(entrada: dict):
+        return PermissionResultAllow(updated_input=entrada)
+
+    def NEGAR(mensaje: str):
+        return PermissionResultDeny(message=mensaje)
+except ImportError:
+    def PERMITIR(entrada: dict):
+        return {"behavior": "allow", "updatedInput": entrada}
+
+    def NEGAR(mensaje: str):
+        return {"behavior": "deny", "message": mensaje}
+
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)-10s %(message)s"
 )
@@ -81,22 +100,22 @@ class Asistente:
 
     async def permiso(self, herramienta: str, entrada: dict, _ctx) -> dict:
         if herramienta in LIBRES:
-            return {"behavior": "allow", "updatedInput": entrada}
+            return PERMITIR(entrada)
 
         if herramienta == "Bash":
             orden = str(entrada.get("command", "")).strip()
             if orden.startswith(BASH_MIRON):
-                return {"behavior": "allow", "updatedInput": entrada}
+                return PERMITIR(entrada)
 
         libres_extra = set(self.o.get("permitir_sin_preguntar") or [])
         if herramienta == "mcp__casa__reiniciar_complemento" and "reiniciar_complemento" in libres_extra:
-            return {"behavior": "allow", "updatedInput": entrada}
+            return PERMITIR(entrada)
         if herramienta == "mcp__casa__recargar_integracion" and "recargar_integracion" in libres_extra:
-            return {"behavior": "allow", "updatedInput": entrada}
+            return PERMITIR(entrada)
         if herramienta == "mcp__casa__reiniciar_por_poe" and "reiniciar_por_poe" in libres_extra:
-            return {"behavior": "allow", "updatedInput": entrada}
+            return PERMITIR(entrada)
         if herramienta == "mcp__casa__listar_integraciones":
-            return {"behavior": "allow", "updatedInput": entrada}
+            return PERMITIR(entrada)
 
         # Libertad nocturna: de 00 a 11 Ariel duerme y el agente resuelve solo
         # lo del indoor, las camaras y el dormitorio. De dia, esto pide el dale.
@@ -107,7 +126,7 @@ class Asistente:
             )
             if herramienta == "mcp__casa__reiniciar_por_poe":
                 log.info("libertad nocturna: reinicio por PoE %s", entrada)
-                return {"behavior": "allow", "updatedInput": entrada}
+                return PERMITIR(entrada)
             if herramienta == "mcp__casa__ejecutar_en_la_casa":
                 dominio = str(entrada.get("dominio", "")).lower()
                 datos = entrada.get("datos") or {}
@@ -121,19 +140,16 @@ class Asistente:
                     and all(any(z in e for z in zona) for e in ids)
                 ):
                     log.info("libertad nocturna sobre %s", ids)
-                    return {"behavior": "allow", "updatedInput": entrada}
+                    return PERMITIR(entrada)
 
         if time.time() < self.permiso_hasta:
             log.info("permitido por autorizacion de Ariel: %s", herramienta)
-            return {"behavior": "allow", "updatedInput": entrada}
+            return PERMITIR(entrada)
 
-        return {
-            "behavior": "deny",
-            "message": (
-                "Esta accion cambia algo y todavia no esta autorizada. Contale a Ariel "
-                "en una frase que queres hacer y pedile que te diga 'dale' para hacerlo."
-            ),
-        }
+        return NEGAR(
+            "Esta accion cambia algo y todavia no esta autorizada. Contale a Ariel "
+            "en una frase que queres hacer y pedile que te diga 'dale' para hacerlo."
+        )
 
     def autorizar(self, minutos: int = 10) -> None:
         self.permiso_hasta = time.time() + minutos * 60
