@@ -19,7 +19,7 @@ from aiohttp import web
 from agente import Agente
 from hogar import Hogar
 from vigilante import Vigilante
-from voz import Voz
+from voz import Voz, es_horario_de_silencio
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)-10s %(message)s"
@@ -42,6 +42,18 @@ LIBRES = {
 
 # Ordenes de consola que son de solo mirar.
 BASH_MIRON = ("ls", "cat", "head", "tail", "grep", "find", "git status", "git log", "git diff", "ps", "df", "ping", "curl -s")
+
+# En el horario de no molestar (00-11) el agente tiene via libre para actuar
+# sobre estas zonas sin pedir el dale: el indoor, las camaras y el dormitorio.
+# Ariel lo pidio explicito: de noche resuelve solo, de dia pide confirmacion.
+# La regla de silencio sigue por encima: via libre para ACTUAR, no para sonar.
+ZONA_LIBRE_DE_NOCHE = (
+    "indoor", "cultivo", "riego", "carpa", "humidificador", "humedad",
+    "ventilador", "camara", "camera", "frigate", "dormitorio",
+)
+
+# Dominios que hacen ruido o luz fuerte: nunca se liberan solos de noche.
+DOMINIOS_QUE_SUENAN = {"tts", "media_player", "notify", "siren"}
 
 
 def cargar_opciones() -> dict:
@@ -82,6 +94,31 @@ class Asistente:
             return {"behavior": "allow", "updatedInput": entrada}
         if herramienta == "mcp__casa__listar_integraciones":
             return {"behavior": "allow", "updatedInput": entrada}
+
+        # Libertad nocturna: de 00 a 11 Ariel duerme y el agente resuelve solo
+        # lo del indoor, las camaras y el dormitorio. De dia, esto pide el dale.
+        if es_horario_de_silencio():
+            zona = tuple(
+                str(z).lower()
+                for z in (self.o.get("zona_libre_de_noche") or ZONA_LIBRE_DE_NOCHE)
+            )
+            if herramienta == "mcp__casa__reiniciar_por_poe":
+                log.info("libertad nocturna: reinicio por PoE %s", entrada)
+                return {"behavior": "allow", "updatedInput": entrada}
+            if herramienta == "mcp__casa__ejecutar_en_la_casa":
+                dominio = str(entrada.get("dominio", "")).lower()
+                datos = entrada.get("datos") or {}
+                ids = datos.get("entity_id") or (datos.get("target") or {}).get("entity_id") or []
+                if isinstance(ids, str):
+                    ids = [ids]
+                ids = [str(i).lower() for i in ids]
+                if (
+                    dominio not in DOMINIOS_QUE_SUENAN
+                    and ids
+                    and all(any(z in e for z in zona) for e in ids)
+                ):
+                    log.info("libertad nocturna sobre %s", ids)
+                    return {"behavior": "allow", "updatedInput": entrada}
 
         if time.time() < self.permiso_hasta:
             log.info("permitido por autorizacion de Ariel: %s", herramienta)

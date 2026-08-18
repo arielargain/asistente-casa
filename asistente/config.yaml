@@ -1,5 +1,5 @@
 name: Asistente de Ariel
-version: "0.5.1"
+version: "0.5.2"
 slug: asistente
 description: Agente proactivo de la casa. Vigila los dispositivos, avisa por el parlante cuando algo se cae y ayuda a resolverlo.
 url: https://github.com/arielargain/asistente-casa
@@ -38,6 +38,18 @@ options:
     - binary_sensor.alarma
   entidades_ignoradas:
     - sensor.fecha
+  zona_libre_de_noche:
+    - indoor
+    - cultivo
+    - riego
+    - carpa
+    - humidificador
+    - humedad
+    - ventilador
+    - camara
+    - camera
+    - frigate
+    - dormitorio
 schema:
   clave_anthropic: password
   modelo: str
@@ -52,4 +64,6 @@ schema:
   entidades_criticas:
     - str
   entidades_ignoradas:
+    - str
+  zona_libre_de_noche:
     - str
