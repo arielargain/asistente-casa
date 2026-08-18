@@ -74,12 +74,21 @@ class Voz:
                 self._cola.task_done()
                 continue
             try:
+                parlante = self.o.get("parlante", "media_player.dormitorio")
+                # La bocina dormida descarta el audio SIN error (trampa
+                # conocida): despertarla antes, como hace el panel de voz.
+                estado = (self.hogar.estado(parlante) or {}).get("state")
+                if estado in (None, "off", "idle", "standby", "unknown", "unavailable"):
+                    await self.hogar.llamar_servicio(
+                        "media_player", "turn_on", {"entity_id": parlante}
+                    )
+                    await asyncio.sleep(1.5)
                 await self.hogar.llamar_servicio(
                     "tts",
                     "speak",
                     {
                         "entity_id": self.o.get("voz", "tts.piper"),
-                        "media_player_entity_id": self.o.get("parlante", "media_player.dormitorio"),
+                        "media_player_entity_id": parlante,
                         "message": texto,
                         "cache": True,
                     },

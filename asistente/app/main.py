@@ -368,6 +368,10 @@ class Asistente:
         """Un encargo SIEMPRE termina con una frase: la respuesta, el error o
         el aviso de que no hubo nada. El silencio ya nos costo tres encargos."""
         assert self.agente and self.voz
+        # El encargo de Ariel ES la autorizacion: no tiene sentido que el
+        # agente le pida el dale por algo que el mismo acaba de ordenar.
+        # (Aprendido el 18/8: tres encargos frenados por permisos.)
+        self.autorizar(15)
         pend = self._leer_pendientes()
         if texto not in pend:
             self._guardar_pendientes(pend + [texto])
@@ -390,6 +394,16 @@ class Asistente:
             )
         self._guardar_pendientes([p for p in self._leer_pendientes() if p != texto])
         self.anotar("encargo", [], frase)
+        # Rastro escrito SIEMPRE: si la bocina se traga el audio, el resultado
+        # queda en la campanita de HA igual.
+        try:
+            assert self.hogar
+            await self.hogar.llamar_servicio(
+                "persistent_notification", "create",
+                {"title": "Encargo terminado", "message": frase[:900]},
+            )
+        except Exception:  # noqa: BLE001
+            log.exception("no pude dejar la notificacion del encargo")
         # proactivo=False: lo pidio Ariel y suena aunque sea de madrugada.
         # proactivo=True: es un encargo retomado tras un reinicio; si es de
         # noche va callado al parte de las 11:30, la regla de silencio manda.
