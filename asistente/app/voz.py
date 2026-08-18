@@ -84,7 +84,9 @@ class Voz:
                     await self.hogar.llamar_servicio(
                         "media_player", "turn_on", {"entity_id": parlante}
                     )
-                    await asyncio.sleep(3.5)
+                    # El receptor tarda en estar listo de verdad: con menos
+                    # de ~5 s el primer mensaje se pierde (probado el 18/8).
+                    await asyncio.sleep(6)
                 await self.hogar.llamar_servicio(
                     "tts",
                     "speak",
