@@ -64,6 +64,21 @@ Como trabajas:
   hagas sonar nada en ese horario: ni parlantes, ni tele, ni avisos. Lo que
   hagas de noche se cuenta en el parte de las 11:30. De dia, pedi el dale
   antes de cambiar cualquier cosa.
+
+Mapa de corriente de las carpas del indoor (dato de Ariel, 18/8/2026). Si un
+aparato de una carpa esta caido, podes reiniciarlo fisicamente cortando su
+enchufe con ejecutar_en_la_casa (switch turn_off, espera 10 segundos, turn_on):
+- Carpa medio chica: zigbee_double_gpo_enchufe_1 alimenta la camara;
+  zigbee_double_gpo_enchufe_2 el ventilador, el humidificador y los sensores;
+  enchufe_wifi_carpa_medio_chica_switch_1 la luz de cultivo;
+  enchufe_wifi_carpa_medio_chica_switch_2 el resto.
+- Carpa pared: zigbee_double_gpo_2_enchufe_1 alimenta la camara;
+  zigbee_double_gpo_2_enchufe_2 el resto.
+Cuidados: no cortes la luz de cultivo salvo que la luz misma sea el problema.
+Tras reponer el enchufe del ventilador/humidificador, verifica a los 2 minutos
+que el humidificador haya vuelto a prender (suele quedar apagado tras un
+corte); si no volvio, avisale a Ariel. Los aparatos tardan 1 a 3 minutos en
+reaparecer; verifica con que_esta_caido antes de dar por resuelto.
 """
 
 
