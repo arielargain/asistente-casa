@@ -8,6 +8,7 @@ definen aca abajo.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -27,6 +28,12 @@ log = logging.getLogger("agente")
 # Lo que puede hacer sin preguntar. Todo lo demas se le consulta a Ariel por voz.
 # Ver PERMISOS en main.py.
 SIEMPRE_PERMITIDO = {"Read", "Glob", "Grep", "WebSearch", "WebFetch"}
+
+# Puertos PoE del switch "casa Arielito" (SG2210MP, controlador Omada local).
+# Cortar y reponer un puerto reinicia fisicamente lo que cuelga de el.
+PUERTO_POE = "switch.ac_15_a2_2d_7a_ec_puerto_{n}_poe"
+CONSUMO_POE = "sensor.ac_15_a2_2d_7a_ec_potencia_poe_del_puerto_{n}"
+PUERTOS_CONOCIDOS = {2: "AP-265-3", 4: "AP-Outdoor", 5: "AP-265-2"}
 
 PERSONALIDAD = """\
 Sos el asistente de la casa de Ariel Argain, en Villaguay, Entre Rios.
@@ -126,6 +133,23 @@ def herramientas_de_la_casa(hogar: Hogar, opciones: dict):
         r = await hogar.config_ha(f"config_entries/entry/{args['entry_id']}/reload", "POST")
         return {"content": [{"type": "text", "text": json.dumps(r, ensure_ascii=False, default=str)[:500]}]}
 
+    @tool("reiniciar_por_poe", "Reinicia FISICAMENTE un aparato cortando y reponiendo su puerto PoE del switch casa Arielito (10 segundos sin corriente). Puertos conocidos: 2 alimenta AP-265-3, 4 alimenta AP-Outdoor, 5 alimenta AP-265-2. AP-265-1 no tiene puerto (va por mesh). Antes de cortar, verifica con estado_de_la_casa el sensor de consumo del puerto: si no estas seguro de que alimenta, no lo cortes", {"puerto": int})
+    async def reiniciar_por_poe(args: dict[str, Any]) -> dict:
+        n = int(args["puerto"])
+        if not 1 <= n <= 8:
+            return {"content": [{"type": "text", "text": "El switch tiene puertos 1 a 8."}]}
+        entidad = PUERTO_POE.format(n=n)
+        if not hogar.estado(entidad):
+            return {"content": [{"type": "text", "text": f"No encuentro {entidad}: revisa la integracion tplink_omada."}]}
+        await hogar.llamar_servicio("switch", "turn_off", {"entity_id": entidad})
+        await asyncio.sleep(10)
+        await hogar.llamar_servicio("switch", "turn_on", {"entity_id": entidad})
+        alimenta = PUERTOS_CONOCIDOS.get(n, "aparato desconocido")
+        return {"content": [{"type": "text", "text": (
+            f"Listo: corte y repuse el puerto {n} ({alimenta}). El aparato tarda "
+            "1 a 3 minutos en volver a estar en linea; verifica despues con que_esta_caido."
+        )}]}
+
     @tool("buscar_en_mis_notas", "Busca por significado en el segundo cerebro de Ariel: sus proyectos, decisiones y documentacion de la casa", {"consulta": str})
     async def buscar_en_mis_notas(args: dict[str, Any]) -> dict:
         texto = await buscar_en_el_cerebro(str(args["consulta"]))
@@ -143,6 +167,7 @@ def herramientas_de_la_casa(hogar: Hogar, opciones: dict):
             reiniciar_complemento,
             listar_integraciones,
             recargar_integracion,
+            reiniciar_por_poe,
             buscar_en_mis_notas,
         ],
     )
@@ -198,6 +223,9 @@ class Agente:
             "registro de Home Assistant y lo que sepas de la casa en las notas de Ariel.\n\n"
             "Si es un falso positivo o algo que ya se resolvio solo, responde exactamente "
             "SILENCIO y nada mas: no le vamos a hablar al pepe.\n\n"
+            "Si es real y el aparato caido cuelga de un puerto PoE del switch, "
+            "tenes la herramienta reiniciar_por_poe para reiniciarlo fisicamente "
+            "(pedile el dale a Ariel si el permiso te lo exige).\n\n"
             "Si es real, decile a Ariel en dos o tres frases que se cayo, por que pensas "
             "que paso, y que hiciste o que necesitas de el. Hablado, sin listas."
         )

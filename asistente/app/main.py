@@ -78,6 +78,8 @@ class Asistente:
             return {"behavior": "allow", "updatedInput": entrada}
         if herramienta == "mcp__casa__recargar_integracion" and "recargar_integracion" in libres_extra:
             return {"behavior": "allow", "updatedInput": entrada}
+        if herramienta == "mcp__casa__reiniciar_por_poe" and "reiniciar_por_poe" in libres_extra:
+            return {"behavior": "allow", "updatedInput": entrada}
         if herramienta == "mcp__casa__listar_integraciones":
             return {"behavior": "allow", "updatedInput": entrada}
 
