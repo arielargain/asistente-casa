@@ -95,6 +95,9 @@ class Asistente:
         self.bitacora: list[dict] = []
         # Cuando Ariel dice "dale", se abre la puerta un rato.
         self.permiso_hasta: float = 0
+        # True cuando el agente no responde (sin internet). En ese estado el
+        # guardian sigue detectando y avisando, pero sin analisis.
+        self._degradado: bool = False
 
     # -------------------------------------------------------- permisos
 
@@ -156,24 +159,108 @@ class Asistente:
 
     # ------------------------------------------------------- vigilancia
 
+    def _frase_local(self, incidente) -> str:
+        """Aviso armado con reglas, sin modelo.
+
+        Es el plan B de cuando el agente no contesta (tipicamente: no hay
+        internet). No razona ni propone arreglos, pero DICE que algo se cayo.
+        Antes de esto, sin conexion la vigilancia se callaba entera.
+        """
+        assert self.hogar
+        nombres: list[str] = []
+        for ent in incidente.entidades[:4]:
+            est = self.hogar.estado(ent) or {}
+            nombres.append((est.get("attributes") or {}).get("friendly_name") or ent)
+        lista = ", ".join(nombres)
+        resto = len(incidente.entidades) - len(nombres)
+        if resto > 0:
+            lista += f" y {resto} mas"
+        if incidente.tipo == "recuperacion":
+            return f"Volvio: {lista}."
+        if incidente.tipo == "bateria":
+            return f"Bateria baja en {lista}."
+        if incidente.tipo == "energia":
+            return f"Aviso de energia en {lista}."
+        return f"Se cayo {lista}. No pude analizarlo, te lo aviso igual."
+
+    async def _avisar_modo_degradado(self, motivo: str) -> None:
+        """Deja constancia escrita UNA sola vez de que se quedo sin cerebro.
+
+        Va por notificacion (no habla) porque el aviso hablado ya lo hace el
+        incidente en si, y porque de 00 a 11 no puede sonar nada.
+        """
+        if self._degradado:
+            return
+        self._degradado = True
+        log.warning("MODO DEGRADADO: sin agente (%s)", motivo)
+        try:
+            assert self.hogar
+            await self.hogar.llamar_servicio(
+                "persistent_notification", "create",
+                {
+                    "title": "Guardian en modo degradado",
+                    "message": (
+                        "No llego al agente (probablemente no hay internet). "
+                        "Sigo vigilando y te aviso lo que se cae, pero sin "
+                        "analisis ni arreglos automaticos. Los comandos de voz "
+                        "de la casa siguen funcionando."
+                    ),
+                    "notification_id": "guardian_degradado",
+                },
+            )
+        except Exception:  # noqa: BLE001
+            log.exception("no pude avisar del modo degradado")
+
+    async def _salir_de_modo_degradado(self) -> None:
+        if not self._degradado:
+            return
+        self._degradado = False
+        log.info("el agente volvio a responder: fin del modo degradado")
+        try:
+            assert self.hogar
+            await self.hogar.llamar_servicio(
+                "persistent_notification", "dismiss",
+                {"notification_id": "guardian_degradado"},
+            )
+        except Exception:  # noqa: BLE001
+            log.exception("no pude limpiar el aviso de modo degradado")
+
     async def rondas(self) -> None:
         assert self.vigilante and self.agente and self.voz and self.hogar
         await self.hogar.esperar_listo()
         self.vigilante.tomar_linea_base()
         while True:
             try:
-                for incidente in self.vigilante.revisar():
-                    log.info("incidente %s en %s", incidente.tipo, incidente.entidades)
-                    frase = await self.agente.analizar(incidente)
-                    self.anotar(incidente.tipo, incidente.entidades, frase)
-                    if frase and "SILENCIO" not in frase.upper():
-                        await self.voz.decir(frase)
-                    else:
-                        log.info("el agente decidio no hablar")
+                incidentes = list(self.vigilante.revisar())
             except asyncio.CancelledError:
                 raise
             except Exception:  # noqa: BLE001
-                log.exception("la ronda de vigilancia fallo")
+                log.exception("no pude revisar la casa")
+                incidentes = []
+            # El try va DENTRO del for a proposito: antes estaba afuera y el
+            # primer incidente que fallaba se llevaba puesta la ronda entera,
+            # asi que los demas ni se miraban.
+            for incidente in incidentes:
+                log.info("incidente %s en %s", incidente.tipo, incidente.entidades)
+                try:
+                    frase = await self.agente.analizar(incidente)
+                    await self._salir_de_modo_degradado()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:  # noqa: BLE001
+                    log.warning("el agente no analizo (%s); aviso sin modelo", e)
+                    frase = self._frase_local(incidente)
+                    await self._avisar_modo_degradado(str(e))
+                # Se anota SIEMPRE, con frase del agente o con la de reglas:
+                # asi el incidente llega al parte de las 11:30 aunque en el
+                # momento no hubiera internet.
+                self.anotar(incidente.tipo, incidente.entidades, frase)
+                if frase and "SILENCIO" not in frase.upper():
+                    # proactivo=True: respeta la regla de silencio 00-11 y lo
+                    # guarda para el parte.
+                    await self.voz.decir(frase)
+                else:
+                    log.info("el agente decidio no hablar")
             await asyncio.sleep(60)
 
     # ------------------------------------------------------- encargos por voz
@@ -267,7 +354,46 @@ class Asistente:
             try:
                 await self._dar_parte()
             except Exception:  # noqa: BLE001
-                log.exception("el parte diario fallo")
+                log.exception("el parte diario fallo; doy el parte sin modelo")
+                try:
+                    await self._parte_local()
+                except Exception:  # noqa: BLE001
+                    log.exception("tampoco pude dar el parte sin modelo")
+
+    async def _parte_local(self) -> None:
+        """Parte de las 11:30 armado con reglas, sin modelo.
+
+        Si el corte de internet duro toda la noche, este es el unico modo de
+        que Ariel se entere a la maniana de lo que paso mientras dormia.
+        """
+        assert self.voz and self.hogar
+        try:
+            fallas = await self._autochequeo()
+        except Exception:  # noqa: BLE001
+            fallas = []
+        callado = self.voz.tomar_callado()
+        hace24 = time.time() - 24 * 3600
+        incidentes = [
+            b for b in self.bitacora
+            if b["cuando"] > hace24 and b["tipo"] not in ("encargo", "recuperacion")
+        ]
+        frases = ["Parte del dia. Te lo doy sin analisis porque me quede sin conexion."]
+        if fallas:
+            frases.append("Del autochequeo: " + "; ".join(fallas) + ".")
+        if incidentes:
+            frases.append(f"Hubo {len(incidentes)} incidentes en las ultimas 24 horas.")
+            for b in incidentes[-4:]:
+                if b.get("texto"):
+                    frases.append(b["texto"][:140])
+        if callado:
+            frases.append(f"Ademas me guarde {len(callado)} avisos de la noche.")
+            for _, t in callado[-3:]:
+                frases.append(t[:140])
+        if not fallas and not incidentes and not callado:
+            frases.append("No se cayo nada y no hay avisos guardados.")
+        texto = " ".join(frases)
+        self.anotar("parte", [], texto)
+        await self.voz.decir(texto, proactivo=False)
 
     async def _autochequeo(self) -> list[str]:
         """El guardian se toma el pulso. Devuelve solo lo que esta MAL."""
