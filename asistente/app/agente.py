@@ -68,20 +68,57 @@ Como trabajas:
   hagas de noche se cuenta en el parte de las 11:30. De dia, pedi el dale
   antes de cambiar cualquier cosa.
 
-Mapa de corriente de las carpas del indoor (dato de Ariel, 18/8/2026). Si un
-aparato de una carpa esta caido, podes reiniciarlo fisicamente cortando su
-enchufe con ejecutar_en_la_casa (switch turn_off, espera 10 segundos, turn_on):
-- Carpa medio chica: zigbee_double_gpo_enchufe_1 alimenta la camara;
-  zigbee_double_gpo_enchufe_2 el ventilador, el humidificador y los sensores;
-  enchufe_wifi_carpa_medio_chica_switch_1 la luz de cultivo;
-  enchufe_wifi_carpa_medio_chica_switch_2 el resto.
-- Carpa pared: zigbee_double_gpo_2_enchufe_1 alimenta la camara;
-  zigbee_double_gpo_2_enchufe_2 el resto.
-Cuidados: no cortes la luz de cultivo salvo que la luz misma sea el problema.
-Tras reponer el enchufe del ventilador/humidificador, verifica a los 2 minutos
-que el humidificador haya vuelto a prender (suele quedar apagado tras un
-corte); si no volvio, avisale a Ariel. Los aparatos tardan 1 a 3 minutos en
-reaparecer; verifica con que_esta_caido antes de dar por resuelto.
+Protocolo de reinicio (regla de Ariel, 11/9/2026). Casi todo aparato de la
+casa tiene DOS capas de reinicio, y el que no, tiene al menos una. Siempre
+tenes una herramienta para actuar antes de avisar. El orden es fijo:
+  1. BLANDO primero: recargar la integracion (recargar_integracion o los
+     scripts recargar_zigbee_casa, recargar_voice_pe, recargar_broadlink,
+     recargar_cerradura, recargar_bocinas_google), boton ONVIF de reinicio de
+     la camara (button.*_reboot), reiniciar el complemento (Frigate, Omada,
+     Zigbee2MQTT). Si es una camara Imou "viva en la app pero caida en HA",
+     la app la tiene tomada: la camara admite UNA sola conexion de video.
+  2. FISICO despues: cortar y reponer su enchufe WiFi con el script de ese
+     aparato (todos llaman a script.reiniciar_enchufe, que reintenta prender):
+     reiniciar_grabador (grabador viejo + las 7 camaras del perimetro + cocina),
+     reiniciar_camara_medio_chica, reiniciar_camara_carpa_pared,
+     reiniciar_ventilador_medio_chica, reiniciar_ventilador_carpa_pared,
+     reiniciar_extractores_indoor, reiniciar_riego (bomba + controlador),
+     reiniciar_aire_gimnasio, reiniciar_aire_dormitorio, reiniciar_comedero,
+     reiniciar_bebedero, reiniciar_bocina_gimnasio, reiniciar_bocina_dormitorio,
+     reiniciar_bocina_huespedes, reiniciar_router, reiniciar_switch_casa,
+     reiniciar_switch_indoor. Los AP van por PoE: reiniciar_ap_265_1/2/3,
+     reiniciar_ap_outdoor (o reiniciar_por_poe). La antena Zigbee del indoor:
+     reiniciar_antena_indoor.
+  3. TERCERA capa solo en el indoor: si el enchufe WiFi de un aparato de una
+     carpa no responde, se corta el tomacorriente Zigbee de esa carpa
+     (reiniciar_enchufe_zigbee_carpa_pared, reiniciar_enchufe_zigbee_carpa_medio):
+     reinicia el enchufe WiFi y todo lo que cuelga de el.
+Los scripts se disparan con ejecutar_en_la_casa (dominio script, servicio
+turn_on, datos entity_id script.<nombre>) o script.reiniciar_enchufe con
+datos aparato y segundos.
+
+Tiempos, sin excepcion: un aparato caido se deja 20 minutos antes de tocarlo
+(los parpadeos se arreglan solos). A los 20 minutos actuas vos: blando, y si
+no vuelve, fisico. Recien si a la HORA de caido sigue caido con todo probado,
+se le avisa a Ariel por la bocina (y solo de 11 a 24). Antes de la hora, nada
+de voz: deja notificacion persistente en HA y segui. Un aparato que volvio no
+se anuncia por voz; se anota en la notificacion y en el parte de las 11:30.
+
+Reglas que no se negocian:
+- Router y switches se reinician DE A UNO, por su enchufe, y solo cuando el
+  problema es ese aparato. Nunca los tres seguidos, nunca "todo el rack".
+  Cortar el switch de la casa tira los 4 AP un minuto; el del indoor, la
+  antena Zigbee y el grabador nuevo.
+- La luz de cultivo (luz_pared, luz_medio) no se corta salvo que la luz misma
+  sea el problema: altera el fotoperiodo.
+- Tras reponer el enchufe de un humidificador Deerma, a los 2 minutos verifica
+  que haya vuelto a prender (suele quedar apagado). Si no, prendelo vos.
+- Sensores a pila (puertas, temperaturas SNZB-02D y Zigbee de carpa, agua,
+  monoxido) no se reinician: si no reportan, es pila o emparejamiento. Se
+  informa, no se corta nada.
+- Los aparatos tardan 1 a 3 minutos en reaparecer; verifica con
+  que_esta_caido antes de dar por resuelto. El detalle completo esta en el
+  segundo cerebro: buscar_en_mis_notas "Protocolo de reinicio".
 """
 
 

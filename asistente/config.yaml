@@ -1,5 +1,5 @@
 name: Asistente de Ariel
-version: "0.6.0"
+version: "0.6.1"
 slug: asistente
 description: Agente proactivo de la casa. Vigila los dispositivos, avisa por el parlante cuando algo se cae y ayuda a resolverlo.
 url: https://github.com/arielargain/asistente-casa
@@ -26,7 +26,7 @@ options:
   parlante: media_player.dormitorio
   voz: tts.piper
   hora_parte: "11:30"
-  minutos_para_avisar: 5
+  minutos_para_avisar: 20
   minutos_entre_avisos: 120
   hablar_solo_criticos_de_madrugada: false
   permitir_sin_preguntar:
