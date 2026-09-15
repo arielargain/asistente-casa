@@ -399,9 +399,23 @@ class Asistente:
         """El guardian se toma el pulso. Devuelve solo lo que esta MAL."""
         assert self.hogar
         fallas: list[str] = []
-        est = self.hogar.estado("assist_satellite.panel_de_voz_satelite_assist")
-        if not est or est.get("state") in ("unavailable", "unknown"):
-            fallas.append("el panel de voz no responde")
+        # Desde el 15/9/2026 el satelite es el Voice PE (el panel ESP32 quedo
+        # guardado y apagado): nunca mas avisar por el panel viejo.
+        sat = str(self.o.get("satelite") or "assist_satellite.dormitorio_1_home_assistant_voice_0a2979_satelite_assist")
+        est = self.hogar.estado(sat)
+        if not est or est.get("state") == "unavailable":
+            fallas.append("el Voice PE no responde")
+        try:
+            rotas = await self.hogar.referencias_rotas(set(self.o.get("entidades_ignoradas") or []))
+            self._rotas = rotas
+            n = len(rotas.get("faltan") or {})
+            m = sum(len(v) for v in (rotas.get("faltan") or {}).values())
+            if n:
+                fallas.append(
+                    f"{n} automatizaciones o scripts apuntan a {m} entidades que ya no existen; las corrijo yo"
+                )
+        except Exception:  # noqa: BLE001
+            log.exception("la auditoria de referencias fallo")
         parl = self.hogar.estado(self.o.get("parlante", "media_player.dormitorio"))
         if not parl or parl.get("state") == "unavailable":
             fallas.append("el parlante del dormitorio no responde")
@@ -458,6 +472,32 @@ class Asistente:
         self.anotar("parte", [], frase)
         if frase:
             await self.voz.decir(frase, proactivo=True)
+        await self._corregir_referencias()
+
+    async def _corregir_referencias(self) -> None:
+        """Orden permanente de Ariel (15/9/2026): lo que apunta a una entidad que
+        ya no existe se corrige solo, buscando la equivalente."""
+        rotas = getattr(self, "_rotas", None) or {}
+        faltan = rotas.get("faltan") or {}
+        if not faltan or not self.agente:
+            return
+        pedido = (
+            "AUDITORIA DIARIA (orden permanente de Ariel). Estas automatizaciones y "
+            "scripts apuntan a entidades que ya no existen: "
+            + json.dumps(faltan, ensure_ascii=False)
+            + ". Para cada entidad faltante busca la equivalente que si existe (el mismo "
+            "aparato renombrado o reemplazado: estado_de_la_casa con parte del nombre, "
+            "buscar_en_mis_notas) y corrigela con reemplazar_entidad. Si no hay una "
+            "equivalente clara, no inventes: dejala anotada. Al final crea una notificacion "
+            "persistente en HA (persistent_notification.create, notification_id "
+            "auditoria_referencias, titulo 'Auditoria de referencias') con lo que cambiaste "
+            "y lo que quedo pendiente. No hables por el parlante."
+        )
+        try:
+            texto = await self.agente.encargo(pedido)
+            self.anotar("auditoria", sorted(faltan), texto or "")
+        except Exception:  # noqa: BLE001
+            log.exception("la correccion automatica de referencias fallo")
 
     def anotar(self, tipo: str, entidades: list[str], texto: str) -> None:
         self.bitacora.append(

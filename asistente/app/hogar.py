@@ -104,6 +104,94 @@ class Hogar:
             if st.get("state") == "unavailable" and e not in ignorar
         ]
 
+
+    async def referencias_rotas(self, ignorar: set[str] | None = None) -> dict:
+        """Automatizaciones y scripts que apuntan a entidades que no existen o estan caidas.
+
+        Orden permanente de Ariel (15/9/2026): cuando un aparato se cambia o se
+        renombra, las automatizaciones tienen que seguirlo solas. Esto es lo que
+        lo detecta; el agente lo corrige con reemplazar_entidad.
+        """
+        import re
+
+        ignorar = ignorar or set()
+        patron = re.compile(
+            r"\b(sensor|binary_sensor|switch|light|camera|media_player|remote|climate|"
+            r"humidifier|lock|cover|fan|vacuum|number|select|input_boolean|input_number|"
+            r"input_text|button|automation|script|scene|device_tracker|alarm_control_panel|"
+            r"siren|event|text|counter|timer|group|assist_satellite|image|todo|calendar)"
+            r"\.([a-z0-9_]+)\b"
+        )
+        verbos = {
+            "turn_on", "turn_off", "toggle", "press", "select_option", "set_value", "play_media",
+            "volume_set", "volume_mute", "volume_up", "volume_down", "select_source",
+            "send_command", "learn_command", "alarm_trigger", "alarm_arm_home", "alarm_arm_away",
+            "alarm_arm_night", "alarm_disarm", "start", "stop", "pause", "reboot", "reload",
+            "restart", "reload_config_entry", "set_mode", "set_humidity", "set_temperature",
+            "set_hvac_mode", "snapshot", "record", "media_stop", "media_play", "media_pause",
+            "media_next_track", "media_previous_track", "create", "dismiss", "speak", "announce",
+            "start_conversation", "update_entity", "set_datetime", "increment", "decrement",
+            "reset", "return_to_base", "locate", "clean_spot", "set_fan_speed", "oscillate",
+            "set_percentage", "lock", "unlock", "open", "close", "open_cover", "close_cover",
+            "stop_cover", "set_options", "trigger", "enable", "disable", "set", "finish",
+            "cancel", "change", "add_item", "remove_item", "reload_all", "set_location",
+            "set_direction", "set_preset_mode", "set_swing_mode", "set_aux_heat",
+            "set_speed", "set_position", "set_tilt_position", "send_message", "notify",
+            "clear_playlist", "shuffle_set", "repeat_set", "join", "unjoin", "browse_media",
+            "search_media", "play_pause", "media_play_pause", "apply",
+        }
+        fuentes: dict[str, str] = {}
+        for e, st in self._estados.items():
+            if e.startswith("automation."):
+                aid = (st.get("attributes") or {}).get("id")
+                if aid:
+                    fuentes[e] = f"automation/config/{aid}"
+            elif e.startswith("script."):
+                fuentes[e] = f"script/config/{e[7:]}"
+        faltan: dict[str, list[str]] = {}
+        caidas: dict[str, list[str]] = {}
+        for origen, camino in fuentes.items():
+            try:
+                cfg = await self.config_ha(camino)
+            except Exception:  # noqa: BLE001
+                continue
+            texto = json.dumps(cfg, ensure_ascii=False)
+            refs = {m.group(0) for m in patron.finditer(texto) if m.group(2) not in verbos}
+            f = sorted(r for r in refs if r not in self._estados)
+            c = sorted(
+                r for r in refs
+                if r in self._estados and self._estados[r].get("state") == "unavailable" and r not in ignorar
+            )
+            if f:
+                faltan[origen] = f
+            if c:
+                caidas[origen] = c
+        return {"faltan": faltan, "caidas": caidas}
+
+    async def reemplazar_entidad(self, vieja: str, nueva: str) -> list[str]:
+        """Cambia una entidad por otra en todas las automatizaciones y scripts."""
+        cambiadas: list[str] = []
+        for e, st in list(self._estados.items()):
+            if e.startswith("automation."):
+                aid = (st.get("attributes") or {}).get("id")
+                if not aid:
+                    continue
+                camino = f"automation/config/{aid}"
+            elif e.startswith("script."):
+                camino = f"script/config/{e[7:]}"
+            else:
+                continue
+            try:
+                cfg = await self.config_ha(camino)
+            except Exception:  # noqa: BLE001
+                continue
+            texto = json.dumps(cfg, ensure_ascii=False)
+            if vieja not in texto:
+                continue
+            await self.config_ha(camino, "POST", json.loads(texto.replace(vieja, nueva)))
+            cambiadas.append(e)
+        return cambiadas
+
     # ----------------------------------------------------------- websocket
 
     def al_cambiar(self, cb: Callable[[dict], Awaitable[None]]) -> None:

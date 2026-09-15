@@ -119,6 +119,15 @@ Reglas que no se negocian:
 - Los aparatos tardan 1 a 3 minutos en reaparecer; verifica con
   que_esta_caido antes de dar por resuelto. El detalle completo esta en el
   segundo cerebro: buscar_en_mis_notas "Protocolo de reinicio".
+
+Auditoria diaria (orden permanente de Ariel, 15/9/2026): la casa tiene que
+seguir sola a los aparatos que se cambian o se renombran. Cada dia, con el
+parte, corre referencias_rotas. Si una automatizacion o script apunta a una
+entidad que ya no existe, busca la equivalente (el mismo aparato renombrado o
+reemplazado: estado_de_la_casa con parte del nombre, buscar_en_mis_notas) y
+corregila con reemplazar_entidad. Si no hay equivalente clara, no inventes:
+dejalo anotado. El resultado va a una notificacion persistente en HA
+(notification_id auditoria_referencias), nunca por el parlante.
 """
 
 
@@ -211,6 +220,30 @@ def herramientas_de_la_casa(hogar: Hogar, opciones: dict):
             "1 a 3 minutos en volver a estar en linea; verifica despues con que_esta_caido."
         )}]}
 
+
+    @tool("referencias_rotas", "Audita TODAS las automatizaciones y scripts: devuelve las que apuntan a entidades que ya no existen (faltan) y las que apuntan a entidades caidas (caidas). Es la base de la auditoria diaria", {})
+    async def referencias_rotas(_args: dict[str, Any]) -> dict:
+        r = await hogar.referencias_rotas(set(opciones.get("entidades_ignoradas") or []))
+        return {"content": [{"type": "text", "text": json.dumps(r, ensure_ascii=False)[:8000]}]}
+
+    @tool("leer_automatizacion", "Devuelve la configuracion completa de una automatizacion (automation.xxx) o de un script (script.xxx)", {"entidad": str})
+    async def leer_automatizacion(args: dict[str, Any]) -> dict:
+        eid = str(args["entidad"])
+        if eid.startswith("automation."):
+            aid = ((hogar.estado(eid) or {}).get("attributes") or {}).get("id")
+            r = await hogar.config_ha(f"automation/config/{aid}")
+        else:
+            r = await hogar.config_ha(f"script/config/{eid[7:]}")
+        return {"content": [{"type": "text", "text": json.dumps(r, ensure_ascii=False)[:8000]}]}
+
+    @tool("reemplazar_entidad", "Reemplaza una entidad por otra en TODAS las automatizaciones y scripts de una sola vez (cuando un aparato se cambio o se renombro). Antes verifica con estado_de_la_casa que la nueva exista. Devuelve la lista de lo que cambio", {"vieja": str, "nueva": str})
+    async def reemplazar_entidad(args: dict[str, Any]) -> dict:
+        vieja, nueva = str(args["vieja"]).strip(), str(args["nueva"]).strip()
+        if not hogar.estado(nueva):
+            return {"content": [{"type": "text", "text": f"No existe {nueva}: no cambio nada."}]}
+        cambiadas = await hogar.reemplazar_entidad(vieja, nueva)
+        return {"content": [{"type": "text", "text": f"Reemplazada {vieja} por {nueva} en: {', '.join(cambiadas) or 'ningun lado'}"}]}
+
     @tool("buscar_en_mis_notas", "Busca por significado en el segundo cerebro de Ariel: sus proyectos, decisiones y documentacion de la casa", {"consulta": str})
     async def buscar_en_mis_notas(args: dict[str, Any]) -> dict:
         texto = await buscar_en_el_cerebro(str(args["consulta"]))
@@ -229,6 +262,9 @@ def herramientas_de_la_casa(hogar: Hogar, opciones: dict):
             listar_integraciones,
             recargar_integracion,
             reiniciar_por_poe,
+            referencias_rotas,
+            leer_automatizacion,
+            reemplazar_entidad,
             buscar_en_mis_notas,
         ],
     )
