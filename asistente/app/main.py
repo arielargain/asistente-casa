@@ -671,6 +671,10 @@ de los botones, los emisores y los motores de voz, no una caida.</p>
             os.environ["ANTHROPIC_API_KEY"] = self.o["clave_anthropic"]
         else:
             log.error("falta la clave de Anthropic en la configuracion del complemento")
+        if self.o.get("clave_cerebro"):
+            os.environ["CEREBRO_TOKEN"] = self.o["clave_cerebro"]
+        else:
+            log.warning("falta la clave del cerebro en la configuracion del complemento")
 
         self.sesion = aiohttp.ClientSession()
         self.hogar = Hogar(self.sesion)

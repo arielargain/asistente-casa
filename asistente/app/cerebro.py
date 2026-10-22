@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 
 import aiohttp
 
@@ -20,14 +21,17 @@ LLAVE_PUBLICA = (
     "eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlqZHh0dmdra2RjZ2loYXRta2FrIiwicm9sZSI6ImFub24i"
     "LCJpYXQiOjE3ODQxMzgxODksImV4cCI6MjA5OTcxNDE4OX0.Xt57v7dVYJPN1MH_rm43iWOfyAl7hqBUbslgKtft0xo"
 )
-FICHA = "cbr_7Kq2xW9mZ4tR1nH6vB3sL8dY"
 
 
 async def buscar_en_el_cerebro(consulta: str, cantidad: int = 6) -> str:
+    ficha = os.environ.get("CEREBRO_TOKEN", "").strip()
+    if not ficha:
+        log.warning("falta la clave del cerebro (clave_cerebro) en la configuracion del complemento")
+        return "No pude consultar las notas: falta la clave del cerebro en la configuración del complemento."
     cabeceras = {
         "apikey": LLAVE_PUBLICA,
         "Authorization": f"Bearer {LLAVE_PUBLICA}",
-        "x-cerebro-token": FICHA,
+        "x-cerebro-token": ficha,
         "Content-Type": "application/json",
     }
     cuerpo = {"accion": "buscar", "texto": consulta, "cantidad": cantidad}

@@ -1,5 +1,5 @@
 name: Asistente de Ariel
-version: "0.6.2"
+version: "0.6.3"
 slug: asistente
 description: Agente proactivo de la casa. Vigila los dispositivos, avisa por el parlante cuando algo se cae y ayuda a resolverlo.
 url: https://github.com/arielargain/asistente-casa
@@ -22,6 +22,7 @@ map:
   - ssl:ro
 options:
   clave_anthropic: ""
+  clave_cerebro: ""
   modelo: claude-sonnet-5
   parlante: media_player.dormitorio
   satelite: assist_satellite.dormitorio_1_home_assistant_voice_0a2979_satelite_assist
@@ -53,6 +54,7 @@ options:
     - dormitorio
 schema:
   clave_anthropic: password
+  clave_cerebro: password
   modelo: str
   parlante: str
   satelite: str?
